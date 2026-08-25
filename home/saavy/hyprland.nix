@@ -95,6 +95,36 @@ in
         }
         {
           _args = [
+            "SUPER + SPACE"
+            (lua "hl.dsp.exec_cmd(\"hyprlauncher --toggle\")")
+          ];
+        }
+        {
+          _args = [
+            "SUPER + E"
+            (lua "hl.dsp.exec_cmd(\"ghostty -e yazi\")")
+          ];
+        }
+        {
+          _args = [
+            "SUPER + CTRL + V"
+            (lua "hl.dsp.exec_cmd(\"clipboard-picker\")")
+          ];
+        }
+        {
+          _args = [
+            "SUPER + G"
+            (lua "hl.dsp.exec_cmd(\"hyprshot -m region --clipboard-only\")")
+          ];
+        }
+        {
+          _args = [
+            "PRINT"
+            (lua "hl.dsp.exec_cmd(\"hyprshot -m region -o $HOME/Pictures\")")
+          ];
+        }
+        {
+          _args = [
             "SUPER + mouse:272"
             (lua "hl.dsp.window.drag()")
             { mouse = true; }
