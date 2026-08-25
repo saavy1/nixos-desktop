@@ -1,10 +1,18 @@
-{ theme, ... }:
+{ pkgs, theme, ... }:
 let
   inherit (theme) colors;
 in
 {
   gtk = {
     enable = true;
+    font = {
+      name = theme.typography.sans;
+      size = theme.typography.size.body;
+    };
+    iconTheme = {
+      name = theme.icons.name;
+      package = pkgs.yaru-theme;
+    };
     gtk3 = {
       extraConfig.gtk-application-prefer-dark-theme = 1;
       extraCss = ''

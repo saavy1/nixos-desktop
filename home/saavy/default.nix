@@ -1,10 +1,14 @@
 { ... }:
 {
   imports = [
+    ./agents.nix
     ./applications.nix
+    ./editor.nix
+    ./git.nix
     ./hyprland.nix
     ./idle-lock.nix
     ./swaync.nix
+    ./quickshell.nix
     ./theme
   ];
 

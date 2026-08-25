@@ -1,3 +1,7 @@
+{ theme, ... }:
+let
+  controlCenterTop = theme.geometry.outerMargin + theme.shell.bar.height + theme.geometry.shellGap;
+in
 {
   services.swaync = {
     enable = true;
@@ -5,7 +9,9 @@
       positionX = "right";
       positionY = "bottom";
       control-center-positionX = "right";
-      control-center-positionY = "none";
+      control-center-positionY = "top";
+      control-center-margin-top = controlCenterTop;
+      control-center-margin-right = theme.geometry.outerMargin;
       layer = "overlay";
       control-center-layer = "overlay";
       cssPriority = "user";
@@ -23,7 +29,11 @@
       transition-time = 200;
       hide-on-clear = true;
       hide-on-action = true;
-      widgets = [ "title" "dnd" "notifications" ];
+      widgets = [
+        "title"
+        "dnd"
+        "notifications"
+      ];
       widget-config = {
         title = {
           text = "Notifications";

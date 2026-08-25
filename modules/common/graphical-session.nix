@@ -10,6 +10,11 @@ in
 
   programs.hyprlock.enable = true;
 
+  fonts.packages = [
+    pkgs.inter
+    pkgs.jetbrains-mono
+  ];
+
   services.greetd = {
     enable = true;
     useTextGreeter = true;

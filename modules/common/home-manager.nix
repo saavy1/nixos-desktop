@@ -1,6 +1,6 @@
-{ inputs, ... }:
+{ inputs, lib, ... }:
 let
-  theme = import ../../themes/solitude.nix;
+  theme = import ../../themes { inherit lib; };
 in
 {
   imports = [ inputs.home-manager.nixosModules.home-manager ];

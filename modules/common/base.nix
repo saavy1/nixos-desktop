@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 {
   time.timeZone = "America/Denver";
 
@@ -7,11 +7,27 @@
     "flakes"
   ];
 
+  nixpkgs.config.allowUnfreePredicate =
+    pkg:
+    builtins.elem (lib.getName pkg) [
+      "discord"
+      "discord-unwrapped"
+      "spotify"
+      "spotify-unwrapped"
+      "steam"
+      "steam-original"
+      "steam-run"
+      "steam-unwrapped"
+    ];
+
   environment.systemPackages = [ pkgs.git ];
 
   networking.networkmanager.enable = true;
 
-  services.tailscale.enable = true;
+  services.tailscale = {
+    enable = true;
+    extraSetFlags = [ "--operator=saavy" ];
+  };
 
   services.openssh = {
     enable = true;
@@ -31,6 +47,7 @@
   users.users.saavy = {
     isNormalUser = true;
     uid = 1000;
+    linger = true;
     group = "saavy";
     shell = pkgs.fish;
     extraGroups = [ "wheel" ];

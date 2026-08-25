@@ -2,6 +2,18 @@
   name = "solitude";
   polarity = "dark";
 
+  icons.name = "Yaru-sage-dark";
+  wallpaper = {
+    path = ./assets/solitude/1-on-pole.jpg;
+    paths = [
+      ./assets/solitude/1-on-pole.jpg
+      ./assets/solitude/2-wreakage.jpg
+      ./assets/solitude/3-climb.jpg
+      ./assets/solitude/4-ether.jpg
+      ./assets/solitude/5-eyed.jpg
+    ];
+  };
+
   colors = {
     background = "#101315";
     backgroundDark = "#0c0e10";
