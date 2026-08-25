@@ -1,6 +1,7 @@
 { ... }:
 {
   imports = [
+    ./base.nix
     ./hardware.nix
     ./storage.nix
   ];
