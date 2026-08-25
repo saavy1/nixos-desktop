@@ -111,9 +111,23 @@ in
     systemd.enable = false;
 
     settings = {
+      monitor = [
+        {
+          output = "desc:LG Electronics LG TV SSCR2";
+          mode = "3840x2160@120";
+          position = "0x0";
+          scale = 1;
+          bitdepth = 10;
+          cm = "auto";
+          sdrbrightness = 1.2;
+          sdrsaturation = 1.0;
+        }
+      ];
+
       config = {
         general.layout = "dwindle";
         dwindle.preserve_split = true;
+        render.cm_auto_hdr = 1;
         input = {
           kb_layout = "us";
           follow_mouse = 1;
