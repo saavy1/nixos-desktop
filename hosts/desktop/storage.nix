@@ -43,4 +43,9 @@
       "dmask=0077"
     ];
   };
+
+  services.btrfs.autoScrub = {
+    enable = true;
+    fileSystems = [ "/" ];
+  };
 }
