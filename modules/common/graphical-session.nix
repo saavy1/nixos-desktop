@@ -1,6 +1,6 @@
 { lib, pkgs, ... }:
 let
-  sessionCommand = "${lib.getExe pkgs.uwsm} start -F -- /run/current-system/sw/bin/Hyprland";
+  sessionCommand = "${lib.getExe pkgs.uwsm} start hyprland.desktop";
 in
 {
   programs.hyprland = {
