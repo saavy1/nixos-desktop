@@ -2,6 +2,11 @@
 {
   time.timeZone = "America/Denver";
 
+  nix.settings.experimental-features = [
+    "nix-command"
+    "flakes"
+  ];
+
   networking.networkmanager.enable = true;
 
   services.tailscale.enable = true;
