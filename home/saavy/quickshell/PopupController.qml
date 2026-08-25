@@ -2,7 +2,6 @@ pragma Singleton
 
 import Quickshell
 import Quickshell.Hyprland
-import Quickshell.Io
 
 Singleton {
     id: controller
@@ -25,7 +24,6 @@ Singleton {
     }
 
     function open(name): void {
-        closeNotificationCenter()
         activePopup = name
     }
 
@@ -42,19 +40,8 @@ Singleton {
         if (activePopup === name) {
             activePopup = ""
         } else {
-            closeNotificationCenter()
             activePopup = name
         }
     }
 
-    function closeNotificationCenter(): void {
-        if (!notificationClose.running)
-            notificationClose.running = true
-    }
-
-    Process {
-        id: notificationClose
-
-        command: ["swaync-client", "--close-panel", "--skip-wait"]
-    }
 }

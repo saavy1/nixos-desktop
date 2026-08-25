@@ -7,6 +7,10 @@ import Quickshell.Wayland
 import QtQuick
 
 Variants {
+    id: root
+
+    required property var notificationState
+    required property var mediaStatus
     model: Quickshell.screens
 
     delegate: Component {
@@ -18,9 +22,10 @@ Variants {
             property string networkState: "unknown"
             readonly property var sink: Pipewire.defaultAudioSink
             readonly property var hyprMonitor: Hyprland.monitorFor(screen)
+            readonly property var notifications: root.notificationState
+            readonly property var media: root.mediaStatus
 
             function togglePanel(target) {
-                notifications.closeCenter()
                 PopupController.toggle(target)
             }
 
@@ -53,9 +58,6 @@ Variants {
                 objects: [bar.sink]
             }
 
-            NotificationStatus {
-                id: notifications
-            }
 
             Process {
                 id: networkProc
@@ -96,8 +98,7 @@ Variants {
                     Rectangle {
                         width: 30
                         height: 30
-                        radius: Theme.radiusSmall
-                        color: PopupController.isOpen("launcher") || menuHover.containsMouse ? Theme.selection : "transparent"
+                        color: PopupController.isOpen("system") || menuHover.containsMouse ? Theme.selection : "transparent"
 
                         Text {
                             anchors.centerIn: parent
@@ -113,8 +114,7 @@ Variants {
 
                             anchors.fill: parent
                             hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: bar.togglePanel("launcher")
+                            onClicked: bar.togglePanel("system")
                         }
                     }
 
@@ -224,7 +224,7 @@ Variants {
                 height: parent.height
                 radius: Theme.radiusMedium
                 color: Theme.withAlpha(Theme.background, Theme.panelOpacity)
-                border.color: PopupController.isOpen("audio") || PopupController.isOpen("network") ? Theme.accent : Theme.backgroundDarker
+                border.color: PopupController.isOpen("audio") || PopupController.isOpen("bluetooth") || PopupController.isOpen("display") || PopupController.isOpen("media") || PopupController.isOpen("network") || PopupController.isOpen("notifications") ? Theme.accent : Theme.backgroundDarker
                 border.width: Theme.borderWidth
 
                 Row {
@@ -232,6 +232,43 @@ Variants {
 
                     anchors.centerIn: parent
                     spacing: Theme.shellGap
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: bar.media && bar.media.hasPlayers
+                        width: visible ? Math.min(220, implicitWidth) : 0
+                        text: bar.media ? bar.media.title || bar.media.playerName : ""
+                        color: PopupController.isOpen("media") || bar.media && bar.media.playing ? Theme.accent : Theme.foregroundSoft
+                        font.family: Theme.fontSans
+                        font.pixelSize: Theme.fontCaption
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: mouse => {
+                                if (mouse.button === Qt.RightButton)
+                                    bar.media.playPause()
+                                else if (mouse.button === Qt.MiddleButton)
+                                    bar.media.next()
+                                else
+                                    bar.togglePanel("media")
+                            }
+                            onWheel: wheel => {
+                                if (wheel.angleDelta.y > 0)
+                                    bar.media.previous()
+                                else
+                                    bar.media.next()
+                            }
+                        }
+                    }
+
+                    PanelDivider {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: bar.media && bar.media.hasPlayers
+                    }
 
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
@@ -251,6 +288,45 @@ Variants {
                     PanelDivider {
                         anchors.verticalCenter: parent.verticalCenter
                     }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "BT"
+                        color: PopupController.isOpen("bluetooth") ? Theme.accent : Theme.foregroundSoft
+                        font.family: Theme.fontSans
+                        font.pixelSize: Theme.fontCaption
+                        font.weight: Font.DemiBold
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: bar.togglePanel("bluetooth")
+                        }
+                    }
+
+                    PanelDivider {
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "DSP"
+                        color: PopupController.isOpen("display") ? Theme.accent : Theme.foregroundSoft
+                        font.family: Theme.fontSans
+                        font.pixelSize: Theme.fontCaption
+                        font.weight: Font.DemiBold
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: bar.togglePanel("display")
+                        }
+                    }
+
+                    PanelDivider {
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
 
                     Text {
                         id: volume
@@ -292,8 +368,8 @@ Variants {
 
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        text: notifications.dnd ? "DND" : notifications.count > 0 ? `N ${notifications.count}` : "N"
-                        color: notifications.dnd ? Theme.warning : notifications.count > 0 ? Theme.accent : Theme.foregroundSoft
+                        text: notifications && notifications.dnd ? "DND" : notifications && notifications.count > 0 ? `N ${notifications.count}` : "N"
+                        color: PopupController.isOpen("notifications") ? Theme.accent : notifications && notifications.dnd ? Theme.warning : notifications && notifications.count > 0 ? Theme.accent : Theme.foregroundSoft
                         font.family: Theme.fontSans
                         font.pixelSize: Theme.fontCaption
                         font.weight: Font.DemiBold

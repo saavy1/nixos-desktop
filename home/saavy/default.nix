@@ -5,9 +5,9 @@
     ./applications.nix
     ./editor.nix
     ./git.nix
+    ./hardware-controls.nix
     ./hyprland.nix
     ./idle-lock.nix
-    ./swaync.nix
     ./quickshell.nix
     ./theme
   ];

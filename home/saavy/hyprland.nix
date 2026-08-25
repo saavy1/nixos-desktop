@@ -281,6 +281,128 @@ in
         }
         {
           _args = [
+            "SUPER + ESCAPE"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call system toggle\")")
+            { description = "Shell · System menu"; }
+          ];
+        }
+        {
+          _args = [
+            "SUPER + CTRL + B"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call bluetooth toggle\")")
+            { description = "Shell · Bluetooth panel"; }
+          ];
+        }
+        {
+          _args = [
+            "SUPER + CTRL + D"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call display toggle\")")
+            { description = "Shell · Display panel"; }
+          ];
+        }
+        {
+          _args = [
+            "SUPER + CTRL + M"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call media toggle\")")
+            { description = "Shell · Media panel"; }
+          ];
+        }
+        {
+          _args = [
+            "XF86AudioRaiseVolume"
+            (lua "hl.dsp.exec_cmd(\"wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+\")")
+            {
+              repeating = true;
+              locked = true;
+              description = "Media · Raise volume";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86AudioLowerVolume"
+            (lua "hl.dsp.exec_cmd(\"wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-\")")
+            {
+              repeating = true;
+              locked = true;
+              description = "Media · Lower volume";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86AudioMute"
+            (lua "hl.dsp.exec_cmd(\"wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle\")")
+            {
+              locked = true;
+              description = "Media · Toggle output mute";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86AudioMicMute"
+            (lua "hl.dsp.exec_cmd(\"wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle\")")
+            {
+              locked = true;
+              description = "Media · Toggle microphone mute";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86MonBrightnessUp"
+            (lua "hl.dsp.exec_cmd(\"brightness-step +5%\")")
+            {
+              repeating = true;
+              locked = true;
+              description = "Display · Raise brightness";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86MonBrightnessDown"
+            (lua "hl.dsp.exec_cmd(\"brightness-step 5%-\")")
+            {
+              repeating = true;
+              locked = true;
+              description = "Display · Lower brightness";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86AudioPlay"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call media playPause\")")
+            {
+              locked = true;
+              description = "Media · Play or pause";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86AudioNext"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call media next\")")
+            {
+              locked = true;
+              description = "Media · Next track";
+            }
+          ];
+        }
+        {
+          _args = [
+            "XF86AudioPrev"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call media previous\")")
+            {
+              locked = true;
+              description = "Media · Previous track";
+            }
+          ];
+        }
+        {
+          _args = [
             "SUPER + E"
             (lua "hl.dsp.exec_cmd(\"ghostty -e yazi\")")
             { description = "Applications · File manager"; }
@@ -296,14 +418,14 @@ in
         {
           _args = [
             "SUPER + G"
-            (lua "hl.dsp.exec_cmd(\"hyprshot -m region --clipboard-only\")")
+            (lua "hl.dsp.exec_cmd(\"hyprshot -m region --clipboard-only && qs -c desktop ipc call osd screenshotCopied\")")
             { description = "Capture · Region to clipboard"; }
           ];
         }
         {
           _args = [
             "PRINT"
-            (lua "hl.dsp.exec_cmd(\"hyprshot -m region -o $HOME/Pictures\")")
+            (lua "hl.dsp.exec_cmd(\"hyprshot -m region -o $HOME/Pictures && qs -c desktop ipc call osd screenshotSaved $HOME/Pictures\")")
             { description = "Capture · Region to file"; }
           ];
         }

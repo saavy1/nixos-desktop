@@ -50,7 +50,7 @@ in
 
     layer_rule = [
       {
-        match.namespace = "^solitude-(bar|launcher|keybinds)$";
+        match.namespace = "^solitude-(audio|bar|bluetooth|calendar|display|keybinds|launcher|media|network|notification-popup|notifications|osd|system|wallpaper-picker)$";
         blur = effects.blur;
         blur_popups = effects.blur;
         ignore_alpha = 0.15;
