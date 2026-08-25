@@ -83,7 +83,7 @@ in
         }
         {
           _args = [
-            "SUPER + V"
+            "SUPER + P"
             (lua "hl.dsp.window.float({ action = \"toggle\" })")
           ];
         }
@@ -107,7 +107,7 @@ in
         }
         {
           _args = [
-            "SUPER + CTRL + V"
+            "SUPER + V"
             (lua "hl.dsp.exec_cmd(\"clipboard-picker\")")
           ];
         }
