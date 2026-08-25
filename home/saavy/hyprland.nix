@@ -1,6 +1,8 @@
-{ lib, ... }:
+{ lib, theme, ... }:
 let
   lua = lib.generators.mkLuaInline;
+  inherit (theme) colors;
+  rgb = color: "rgb(${lib.removePrefix "#" color})";
 
   focusBinds = map
     ({ key, direction }: {
@@ -54,7 +56,14 @@ in
 
     settings = {
       config = {
-        general.layout = "dwindle";
+        general = {
+          layout = "dwindle";
+          border_size = 1;
+          col = {
+            active_border = rgb colors.accent;
+            inactive_border = rgb colors.backgroundDarker;
+          };
+        };
         dwindle.preserve_split = true;
         input = {
           kb_layout = "us";
