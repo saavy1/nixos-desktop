@@ -84,7 +84,45 @@ in
         {
           _args = [
             "SUPER + P"
-            (lua "hl.dsp.window.float({ action = \"toggle\" })")
+            (lua ''
+              function()
+                local window = hl.get_active_window()
+                local monitor = hl.get_active_monitor()
+                if window == nil or monitor == nil then
+                  return
+                end
+
+                if window.pinned then
+                  hl.dispatch(hl.dsp.window.pin())
+                  if window.floating then
+                    hl.dispatch(hl.dsp.window.float({ action = "unset" }))
+                  end
+                  return
+                end
+
+                if not window.floating then
+                  hl.dispatch(hl.dsp.window.float({ action = "set" }))
+                end
+
+                local width = 640
+                local height = 360
+                local margin = 20
+                local x = monitor.x + math.floor(monitor.width / monitor.scale) - width - margin
+                local y = monitor.y + math.floor(monitor.height / monitor.scale) - height - margin
+
+                hl.dispatch(hl.dsp.window.resize({
+                  x = width,
+                  y = height,
+                  relative = false,
+                }))
+                hl.dispatch(hl.dsp.window.move({
+                  x = x,
+                  y = y,
+                  relative = false,
+                }))
+                hl.dispatch(hl.dsp.window.pin())
+              end
+            '')
           ];
         }
         {
