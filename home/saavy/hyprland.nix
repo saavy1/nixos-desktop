@@ -83,6 +83,12 @@ in
         }
         {
           _args = [
+            "SUPER + L"
+            (lua "hl.dsp.exec_cmd(\"hyprlock\")")
+          ];
+        }
+        {
+          _args = [
             "SUPER + P"
             (lua ''
               function()

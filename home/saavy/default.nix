@@ -3,6 +3,7 @@
   imports = [
     ./applications.nix
     ./hyprland.nix
+    ./idle-lock.nix
     ./swaync.nix
     ./theme
   ];

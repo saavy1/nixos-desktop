@@ -8,6 +8,8 @@ in
     withUWSM = true;
   };
 
+  programs.hyprlock.enable = true;
+
   services.greetd = {
     enable = true;
     useTextGreeter = true;
