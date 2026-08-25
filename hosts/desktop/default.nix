@@ -4,6 +4,7 @@
     ./base.nix
     ./hardware.nix
     ./storage.nix
+    ./vm.nix
   ];
 
   networking.hostName = "desktop";
