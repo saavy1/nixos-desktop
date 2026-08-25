@@ -3,7 +3,8 @@
   imports = [
     ./applications.nix
     ./hyprland.nix
-    ./theme.nix
+    ./swaync.nix
+    ./theme
   ];
 
   home = {

@@ -26,14 +26,17 @@ in
     pkgs.wl-clipboard
   ];
 
+  programs.ghostty = {
+    enable = true;
+    enableFishIntegration = true;
+  };
+
   programs.yazi.enable = true;
 
   services.cliphist = {
     enable = true;
     systemdTargets = [ "graphical-session.target" ];
   };
-
-  services.swaync.enable = true;
 
   systemd.user.services.hyprlauncher = {
     Unit = {
