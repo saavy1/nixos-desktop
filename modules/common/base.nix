@@ -7,6 +7,8 @@
     "flakes"
   ];
 
+  environment.systemPackages = [ pkgs.git ];
+
   networking.networkmanager.enable = true;
 
   services.tailscale.enable = true;
