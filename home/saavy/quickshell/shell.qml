@@ -12,6 +12,11 @@ ShellRoot {
     Osd {
         id: osd
     }
+    CaptureState {
+        id: captureState
+        osd: osd
+    }
+
 
     Wallpaper {}
     NotificationPopup {
@@ -20,12 +25,16 @@ ShellRoot {
     Bar {
         notificationState: notificationState
         mediaStatus: mediaStatus
+        captureState: captureState
     }
     Launcher {}
     Keybinds {}
     AudioPanel {}
     BluetoothPanel {}
     CalendarPanel {}
+    CapturePanel {
+        state: captureState
+    }
     DisplayPanel {
         osd: osd
     }

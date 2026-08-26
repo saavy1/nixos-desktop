@@ -8,7 +8,9 @@ in
     pkgs.discord
     pkgs.libnotify
     pkgs.hyprshot
+    pkgs.gpu-screen-recorder
     pkgs.spotify
+    pkgs.slurp
     pkgs.zed-editor
     pkgs.wl-clipboard
   ];

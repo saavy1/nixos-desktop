@@ -34,6 +34,8 @@ in
     "quickshell/desktop/BindingRow.qml".source = ./quickshell/BindingRow.qml;
     "quickshell/desktop/BluetoothPanel.qml".source = ./quickshell/BluetoothPanel.qml;
     "quickshell/desktop/CalendarPanel.qml".source = ./quickshell/CalendarPanel.qml;
+    "quickshell/desktop/CapturePanel.qml".source = ./quickshell/CapturePanel.qml;
+    "quickshell/desktop/CaptureState.qml".source = ./quickshell/CaptureState.qml;
     "quickshell/desktop/DisplayPanel.qml".source = ./quickshell/DisplayPanel.qml;
     "quickshell/desktop/Keybinds.qml".source = ./quickshell/Keybinds.qml;
     "quickshell/desktop/Launcher.qml".source = ./quickshell/Launcher.qml;
@@ -60,6 +62,8 @@ in
     "${config.xdg.configFile."quickshell/desktop/BindingRow.qml".source}"
     "${config.xdg.configFile."quickshell/desktop/BluetoothPanel.qml".source}"
     "${config.xdg.configFile."quickshell/desktop/CalendarPanel.qml".source}"
+    "${config.xdg.configFile."quickshell/desktop/CapturePanel.qml".source}"
+    "${config.xdg.configFile."quickshell/desktop/CaptureState.qml".source}"
     "${config.xdg.configFile."quickshell/desktop/DisplayPanel.qml".source}"
     "${config.xdg.configFile."quickshell/desktop/Keybinds.qml".source}"
     "${config.xdg.configFile."quickshell/desktop/Launcher.qml".source}"

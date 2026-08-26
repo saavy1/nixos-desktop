@@ -11,6 +11,7 @@ Variants {
 
     required property var notificationState
     required property var mediaStatus
+    required property var captureState
     model: Quickshell.screens
 
     delegate: Component {
@@ -24,6 +25,7 @@ Variants {
             readonly property var hyprMonitor: Hyprland.monitorFor(screen)
             readonly property var notifications: root.notificationState
             readonly property var media: root.mediaStatus
+            readonly property var capture: root.captureState
 
             function togglePanel(target) {
                 PopupController.toggle(target)
@@ -224,7 +226,7 @@ Variants {
                 height: parent.height
                 radius: Theme.radiusMedium
                 color: Theme.withAlpha(Theme.background, Theme.panelOpacity)
-                border.color: PopupController.isOpen("audio") || PopupController.isOpen("bluetooth") || PopupController.isOpen("display") || PopupController.isOpen("media") || PopupController.isOpen("network") || PopupController.isOpen("notifications") ? Theme.accent : Theme.backgroundDarker
+                border.color: PopupController.isOpen("audio") || PopupController.isOpen("bluetooth") || PopupController.isOpen("capture") || PopupController.isOpen("display") || PopupController.isOpen("media") || PopupController.isOpen("network") || PopupController.isOpen("notifications") ? Theme.accent : Theme.backgroundDarker
                 border.width: Theme.borderWidth
 
                 Row {
@@ -326,6 +328,35 @@ Variants {
                     PanelDivider {
                         anchors.verticalCenter: parent.verticalCenter
                     }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: bar.capture && bar.capture.recording
+                            ? `REC ${bar.capture.formatDuration(bar.capture.elapsedSeconds)}`
+                            : "CAP"
+                        color: bar.capture && bar.capture.recording
+                            ? Theme.error
+                            : PopupController.isOpen("capture") ? Theme.accent : Theme.foregroundSoft
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontCaption
+                        font.weight: Font.DemiBold
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: mouse => {
+                                if (mouse.button === Qt.RightButton && bar.capture && bar.capture.recording)
+                                    bar.capture.stopRecording()
+                                else
+                                    bar.togglePanel("capture")
+                            }
+                        }
+                    }
+
+                    PanelDivider {
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
 
 
                     Text {

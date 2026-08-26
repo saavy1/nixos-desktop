@@ -435,15 +435,29 @@ in
         {
           _args = [
             "SUPER + G"
-            (lua "hl.dsp.exec_cmd(\"hyprshot -m region --clipboard-only && qs -c desktop ipc call osd screenshotCopied\")")
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call capture-state screenshot region clipboard\")")
             { description = "Capture · Region to clipboard"; }
           ];
         }
         {
           _args = [
             "PRINT"
-            (lua "hl.dsp.exec_cmd(\"hyprshot -m region -o $HOME/Pictures && qs -c desktop ipc call osd screenshotSaved $HOME/Pictures\")")
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call capture-state screenshot region save\")")
             { description = "Capture · Region to file"; }
+          ];
+        }
+        {
+          _args = [
+            "SUPER + SHIFT + G"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call capture toggle\")")
+            { description = "Capture · Open capture center"; }
+          ];
+        }
+        {
+          _args = [
+            "SUPER + CTRL + R"
+            (lua "hl.dsp.exec_cmd(\"qs -c desktop ipc call capture-state toggleRecording\")")
+            { description = "Capture · Toggle screen recording"; }
           ];
         }
         {
