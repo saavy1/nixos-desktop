@@ -9,13 +9,13 @@ PanelWindow {
     id: launcher
 
     readonly property var modes: [
-        { id: "applications", label: "Apps", shortLabel: "APP", hint: "Search applications…" },
-        { id: "clipboard", label: "Clipboard", shortLabel: "CLIP", hint: "Search clipboard history…" },
-        { id: "files", label: "Files", shortLabel: "FILE", hint: "Search files in your home directory…" },
-        { id: "calculator", label: "Calculate", shortLabel: "CALC", hint: "Enter an arithmetic expression…" },
-        { id: "commands", label: "Command", shortLabel: "CMD", hint: "Enter a command and arguments…" },
-        { id: "windows", label: "Windows", shortLabel: "WIN", hint: "Search open windows…" },
-        { id: "web", label: "Web", shortLabel: "WEB", hint: "Search the web…" }
+        { id: "applications", label: "Apps", shortLabel: "APP", prefix: "", hint: "Search applications…  ·  > @ / = ? #" },
+        { id: "clipboard", label: "Clipboard", shortLabel: "CLIP", prefix: "#", hint: "Search clipboard history…" },
+        { id: "files", label: "Files", shortLabel: "FILE", prefix: "/", hint: "Search files in your home directory…" },
+        { id: "calculator", label: "Calculate", shortLabel: "CALC", prefix: "=", hint: "Calculate or convert units…" },
+        { id: "commands", label: "Command", shortLabel: "CMD", prefix: ">", hint: "Enter a command and arguments…" },
+        { id: "windows", label: "Windows", shortLabel: "WIN", prefix: "@", hint: "Search open windows…" },
+        { id: "web", label: "Web", shortLabel: "WEB", prefix: "?", hint: "Search the web…" }
     ]
     property int modeIndex: 0
     readonly property string mode: modes[modeIndex].id
@@ -28,11 +28,21 @@ PanelWindow {
     property string fileError: ""
     property string activationError: ""
     property string historyError: ""
+    property int actionIndex: 0
+    property string confirmationKey: ""
+    property string clipboardPreviewPath: ""
+    property int clipboardPreviewRevision: 0
     readonly property int sourceLimit: 2500
     readonly property var calculation: calculate(searchText.trim())
     readonly property var parsedCommand: parseCommand(searchText.trim())
-    readonly property string webSearchBase: Quickshell.env("SOLITUDE_WEB_SEARCH_URL") || "https://duckduckgo.com/?q="
     readonly property string homeDirectory: Quickshell.env("HOME") || "/"
+    readonly property string runtimeDirectory: Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"
+    readonly property var webProviders: parseWebProviders(Quickshell.env("SOLITUDE_WEB_SEARCH_PROVIDERS"))
+    readonly property var selectedEntry: results.currentItem ? results.currentItem.entry : null
+    readonly property var selectedActions: actionsFor(selectedEntry)
+    readonly property string clipboardPreviewSource: clipboardPreviewPath.length > 0
+        ? `file://${clipboardPreviewPath}?v=${clipboardPreviewRevision}`
+        : ""
 
     readonly property var filteredValues: {
         const needle = normalize(searchText)
@@ -43,27 +53,37 @@ PanelWindow {
             candidates = applications.map(entry => {
                 const command = entry.command || []
                 const stableId = entry.id || `${entry.name || "application"}|${command.join("\u001f")}`
+                const keywords = Array.isArray(entry.keywords) ? entry.keywords.join(" ") : String(entry.keywords || "")
+                const categories = Array.isArray(entry.categories) ? entry.categories.join(" ") : String(entry.categories || "")
                 return {
                     kind: "application",
+                    category: applicationCategory(entry),
                     key: `application:${stableId}`,
                     label: entry.name || "Unnamed application",
                     subtitle: entry.genericName || entry.comment || "Application",
-                    searchable: `${entry.name || ""} ${entry.genericName || ""} ${entry.comment || ""}`,
+                    searchable: `${entry.name || ""} ${entry.genericName || ""} ${entry.comment || ""} ${keywords} ${categories} ${applicationAliases(entry)} ${command.join(" ")}`,
                     icon: entry.icon || "",
-                    payload: entry
+                    payload: entry,
+                    preview: entry.comment || entry.genericName || "Launch application",
+                    meta: command.join(" ")
                 }
             })
         } else if (mode === "clipboard") {
             candidates = clipboardEntries.slice(0, sourceLimit).map(raw => {
                 const preview = raw.replace(/^\d+\s+/, "")
+                const binary = /\[\[\s*binary data/i.test(preview)
+                const image = binary && /(?:image\/|\bpng\b|\bjpe?g\b|\bwebp\b|\bgif\b|\bbmp\b)/i.test(preview)
                 return {
                     kind: "clipboard",
                     key: `clipboard:${raw}`,
-                    label: preview || "Clipboard entry",
-                    subtitle: "Copy from clipboard history",
-                    searchable: preview,
-                    icon: "",
-                    payload: raw
+                    label: image ? "Clipboard image" : binary ? "Clipboard data" : preview || "Clipboard entry",
+                    subtitle: image ? "Image from clipboard history" : "Copy from clipboard history",
+                    searchable: `${preview} ${image ? "image picture screenshot" : ""}`,
+                    icon: image ? "image-x-generic" : "edit-paste",
+                    payload: raw,
+                    image,
+                    preview: image ? "Decoded image preview" : preview,
+                    meta: raw.match(/^\d+/) ? `History entry ${raw.match(/^\d+/)[0]}` : "Clipboard history"
                 }
             })
         } else if (mode === "files") {
@@ -76,7 +96,9 @@ PanelWindow {
                     subtitle: path,
                     searchable: path,
                     icon: "text-x-generic",
-                    payload: path
+                    payload: path,
+                    preview: "Open with the default application",
+                    meta: path
                 }
             })
         } else if (mode === "calculator") {
@@ -85,10 +107,12 @@ PanelWindow {
                     kind: "calculator",
                     key: `calculator:${searchText.trim()}`,
                     label: calculation.text,
-                    subtitle: `${searchText.trim()}  ·  Enter copies result`,
+                    subtitle: `${calculation.detail || searchText.trim()}  ·  Enter copies result`,
                     searchable: searchText,
                     icon: "accessories-calculator",
-                    payload: calculation.text
+                    payload: calculation.text,
+                    preview: calculation.detail || searchText.trim(),
+                    meta: "Copy result to clipboard"
                 }]
             }
         } else if (mode === "commands") {
@@ -101,7 +125,10 @@ PanelWindow {
                     searchable: searchText,
                     icon: "utilities-terminal",
                     payload: parsedCommand.argv,
-                    historyValue: searchText.trim()
+                    historyValue: searchText.trim(),
+                    preview: "Run directly without a shell",
+                    meta: parsedCommand.argv.join("  ·  "),
+                    dangerous: /^(?:rm|rmdir|shutdown|reboot|poweroff|systemctl|uwsm)$/i.test(parsedCommand.argv[0])
                 }]
             } else if (searchText.trim().length === 0) {
                 candidates = historyCandidates("commands")
@@ -118,45 +145,66 @@ PanelWindow {
                     subtitle: `${appClass}  ·  ${workspaceName}${window.activated ? "  ·  active" : ""}`,
                     searchable: `${window.title || ""} ${appClass} ${workspaceName}`,
                     icon: "focus-windows",
-                    payload: window.address
+                    payload: window.address,
+                    preview: `Focus ${appClass}`,
+                    meta: `${workspaceName}  ·  ${window.address}`
                 }
             })
         } else if (mode === "web" && searchText.trim().length > 0) {
-            candidates = [{
-                kind: "web",
-                key: `web:${searchText.trim()}`,
-                label: searchText.trim(),
-                subtitle: "Search with the default web browser",
-                searchable: searchText,
-                icon: "web-browser",
-                payload: searchText.trim(),
-                historyValue: searchText.trim()
-            }]
+            const request = webRequest(searchText)
+            if (request.query.length > 0) {
+                candidates = [{
+                    kind: "web",
+                    key: `web:${request.provider.key}:${request.query}`,
+                    label: request.query,
+                    subtitle: `Search ${request.provider.label}`,
+                    searchable: `${searchText} ${request.query} ${request.provider.label} ${request.provider.key}`,
+                    icon: "web-browser",
+                    payload: request.provider.url + encodeURIComponent(request.query),
+                    historyValue: `${request.provider.key} ${request.query}`,
+                    preview: `Open results from ${request.provider.label}`,
+                    meta: webProviders.map(provider => `${provider.key} ${provider.label}`).join("  ·  ")
+                }]
+            }
         }
 
-        return candidates
+        const resultLimit = mode === "applications" && needle.length === 0 ? 80 : Theme.launcherMaxResults
+        const ranked = candidates
             .map(candidate => {
                 const fuzzy = fuzzyScore(needle, normalize(candidate.searchable || candidate.label))
-                const learned = historyScore(candidate.key)
-                return { candidate, score: fuzzy + learned }
+                const usage = historyEntry(candidate.key)
+                candidate.usageCount = usage.count || 0
+                candidate.lastUsed = usage.lastUsed || 0
+                candidate.recent = candidate.lastUsed > Date.now() - 7 * 24 * 60 * 60 * 1000
+                candidate.group = mode === "applications"
+                    ? needle.length === 0 && candidate.usageCount > 0 ? "Frequent" : candidate.category
+                    : modes[modeIndex].label
+                return { candidate, score: fuzzy + historyScore(candidate.key) }
             })
             .filter(scored => scored.score > -1000000)
             .sort((left, right) => {
+                if (mode === "applications" && needle.length === 0) {
+                    const groupOrder = applicationCategoryOrder(left.candidate.group) - applicationCategoryOrder(right.candidate.group)
+                    if (groupOrder !== 0)
+                        return groupOrder
+                }
                 if (left.score !== right.score)
                     return right.score - left.score
-
                 const leftHistory = historyEntry(left.candidate.key)
                 const rightHistory = historyEntry(right.candidate.key)
                 if (leftHistory.lastUsed !== rightHistory.lastUsed)
                     return rightHistory.lastUsed - leftHistory.lastUsed
-
                 const labelOrder = left.candidate.label.localeCompare(right.candidate.label)
-                if (labelOrder !== 0)
-                    return labelOrder
-                return left.candidate.key.localeCompare(right.candidate.key)
+                return labelOrder !== 0 ? labelOrder : left.candidate.key.localeCompare(right.candidate.key)
             })
-            .slice(0, Theme.launcherMaxResults)
+            .slice(0, resultLimit)
             .map(scored => scored.candidate)
+        let previousGroup = ""
+        ranked.forEach(candidate => {
+            candidate.showGroupHeader = mode === "applications" && needle.length === 0 && candidate.group !== previousGroup
+            previousGroup = candidate.group
+        })
+        return ranked
     }
 
     readonly property string emptyStateText: {
@@ -214,12 +262,136 @@ PanelWindow {
     function normalize(value) {
         return String(value || "").trim().toLowerCase()
     }
+    function prefixMode(prefix) {
+        const routes = { ">": "commands", "@": "windows", "/": "files", "=": "calculator", "?": "web", "#": "clipboard" }
+        const target = routes[prefix]
+        return target ? modes.findIndex(item => item.id === target) : -1
+    }
+
+    function parseWebProviders(raw) {
+        const defaults = [
+            { key: "ddg", label: "DuckDuckGo", url: "https://duckduckgo.com/?q=" },
+            { key: "g", label: "Google", url: "https://www.google.com/search?q=" },
+            { key: "gh", label: "GitHub", url: "https://github.com/search?q=" },
+            { key: "nix", label: "Nix packages", url: "https://search.nixos.org/packages?query=" },
+            { key: "crates", label: "crates.io", url: "https://crates.io/search?q=" },
+            { key: "npm", label: "npm", url: "https://www.npmjs.com/search?q=" }
+        ]
+        if (!raw || String(raw).trim().length === 0)
+            return defaults
+        try {
+            const parsed = JSON.parse(raw)
+            const valid = Array.isArray(parsed) ? parsed.filter(item => item && /^[a-z0-9_-]+$/i.test(item.key || "")
+                && String(item.label || "").length > 0 && /^https?:\/\//.test(item.url || "")) : []
+            return valid.length > 0 ? valid : defaults
+        } catch (error) {
+            return defaults
+        }
+    }
+
+    function webRequest(value) {
+        const words = String(value || "").trim().split(/\s+/).filter(word => word.length > 0)
+        let provider = webProviders[0]
+        if (words.length > 1) {
+            const matched = webProviders.find(item => item.key === words[0].toLowerCase())
+            if (matched) {
+                provider = matched
+                words.shift()
+            }
+        }
+        return { provider, query: words.join(" ") }
+    }
+
+    function applicationAliases(entry) {
+        const combined = normalize(`${entry.name || ""} ${(entry.command || []).join(" ")}`)
+        const aliases = []
+        if (/ghostty|terminal|kitty|alacritty|wezterm/.test(combined))
+            aliases.push("terminal", "shell", "console")
+        if (/helium|firefox|chrom|browser/.test(combined))
+            aliases.push("browser", "web", "internet")
+        if (/zed|code|editor|vim/.test(combined))
+            aliases.push("editor", "code", "development")
+        if (/yazi|nautilus|dolphin|files/.test(combined))
+            aliases.push("files", "folders", "file manager")
+        if (/spotify|music/.test(combined))
+            aliases.push("music", "audio")
+        return aliases.join(" ")
+    }
+    function applicationCategory(entry) {
+        const categories = normalize(Array.isArray(entry.categories) ? entry.categories.join(" ") : entry.categories)
+        const combined = `${categories} ${normalize(entry.name)} ${applicationAliases(entry)}`
+        if (/\bgame\b/.test(combined))
+            return "Games"
+        if (/audiovideo|\baudio\b|\bvideo\b|\bmusic\b|\bplayer\b/.test(combined))
+            return "Media"
+        if (/\bdevelopment\b|\bide\b|\beditor\b|\bcode\b/.test(combined))
+            return "Development"
+        if (/network|webbrowser|\bbrowser\b|\binternet\b|\bemail\b/.test(combined))
+            return "Internet"
+        if (/graphics|photography|2dgraphics|3dgraphics/.test(combined))
+            return "Creative"
+        if (/\boffice\b|wordprocessor|spreadsheet|presentation/.test(combined))
+            return "Office"
+        if (/\bsystem\b|\bsettings\b|\bsecurity\b|package manager/.test(combined))
+            return "System"
+        return "Utilities"
+    }
+    function applicationCategoryOrder(category) {
+        const order = ["Frequent", "Development", "Internet", "Media", "Creative", "Games", "Office", "Utilities", "System"]
+        const index = order.indexOf(category)
+        return index >= 0 ? index : order.length
+    }
+
+
+    function actionToken(entry, actionId) {
+        return entry ? `${entry.key}:${actionId}` : ""
+    }
+
+    function actionNeedsConfirmation(entry, actionId) {
+        return entry && (actionId === "close" || actionId === "delete" || actionId === "primary" && entry.dangerous)
+    }
+
+    function actionsFor(entry) {
+        if (!entry)
+            return []
+        function label(actionId, text) {
+            return actionNeedsConfirmation(entry, actionId) && confirmationKey === actionToken(entry, actionId)
+                ? `Confirm ${text.toLowerCase()}` : text
+        }
+        const primary = entry.kind === "calculator" || entry.kind === "clipboard" ? "Copy"
+            : entry.kind === "command" ? "Run" : entry.kind === "window" ? "Focus" : "Open"
+        const actions = [{ id: "primary", label: label("primary", primary) }]
+        if (["application", "command", "file", "web"].includes(entry.kind))
+            actions.push({ id: "copy", label: "Copy details" })
+        if (entry.kind === "file")
+            actions.push({ id: "reveal", label: "Reveal folder" })
+        if (entry.kind === "clipboard")
+            actions.push({ id: "delete", label: label("delete", "Delete history entry") })
+        if (entry.kind === "window")
+            actions.push({ id: "close", label: label("close", "Close window") })
+        if (historyEntry(entry.key).count > 0)
+            actions.push({ id: "forget", label: "Forget ranking" })
+        return actions
+    }
+
+    function updateSelectedPreview() {
+        actionIndex = 0
+        confirmationKey = ""
+        clipboardPreviewPath = ""
+        const entry = selectedEntry
+        if (!entry || entry.kind !== "clipboard" || !entry.image)
+            return
+        clipboardPreviewPath = `${runtimeDirectory}/solitude-clipboard-preview`
+        clipboardPreviewProc.command = ["clipboard-preview", entry.payload, clipboardPreviewPath]
+        clipboardPreviewProc.running = true
+    }
 
     function fuzzyScore(needle, haystack) {
         if (needle.length === 0)
             return 0
 
-        let score = 0
+        const exact = haystack.indexOf(needle)
+        let score = exact >= 0 ? 600 - Math.min(exact, 100) : 0
         let searchFrom = 0
         let previous = -2
         for (let index = 0; index < needle.length; ++index) {
@@ -251,7 +423,15 @@ PanelWindow {
 
     function historyScore(key) {
         const value = historyEntry(key)
-        return Math.log(1 + (value.count || 0)) * 90 + (value.lastUsed || 0) / 1000000000000
+        const count = value.count || 0
+        if (count <= 0)
+            return 0
+        const age = Math.max(0, Date.now() - (value.lastUsed || 0))
+        const hour = 60 * 60 * 1000
+        const day = 24 * hour
+        const week = 7 * day
+        const factor = age < hour ? 4 : age < day ? 2 : age < week ? 0.5 : 0.25
+        return Math.log2(1 + count * factor) * 90
     }
 
     function historyCandidates(historyMode) {
@@ -272,7 +452,10 @@ PanelWindow {
                 searchable: entry.value,
                 icon: "utilities-terminal",
                 payload: parsed.argv,
-                historyValue: entry.value
+                historyValue: entry.value,
+                preview: "Previously successful command",
+                meta: entry.value,
+                dangerous: /^(?:rm|rmdir|shutdown|reboot|poweroff|systemctl|uwsm)$/i.test(parsed.argv[0])
             })
         })
         return values.slice(0, 300)
@@ -349,9 +532,50 @@ PanelWindow {
         return { ok: true, argv }
     }
 
+    function convertUnits(text) {
+        const match = String(text || "").trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*([a-zA-Z°]+)\s+(?:to|in|->)\s+([a-zA-Z°]+)$/)
+        if (!match)
+            return null
+        const aliases = {
+            millimeter: "mm", millimeters: "mm", centimeter: "cm", centimeters: "cm",
+            meter: "m", meters: "m", kilometer: "km", kilometers: "km",
+            inch: "in", inches: "in", foot: "ft", feet: "ft", yard: "yd", yards: "yd", mile: "mi", miles: "mi",
+            gram: "g", grams: "g", kilogram: "kg", kilograms: "kg", ounce: "oz", ounces: "oz",
+            pound: "lb", pounds: "lb", lbs: "lb", second: "s", seconds: "s", minute: "min", minutes: "min",
+            hour: "h", hours: "h", day: "d", days: "d", byte: "b", bytes: "b",
+            celsius: "c", fahrenheit: "f", kelvin: "k", "°c": "c", "°f": "f"
+        }
+        function canonical(unit) {
+            const clean = unit.toLowerCase()
+            return aliases[clean] || clean
+        }
+        const value = Number(match[1])
+        const from = canonical(match[2])
+        const to = canonical(match[3])
+        if (["c", "f", "k"].includes(from) && ["c", "f", "k"].includes(to)) {
+            const kelvin = from === "c" ? value + 273.15 : from === "f" ? (value - 32) * 5 / 9 + 273.15 : value
+            const converted = to === "c" ? kelvin - 273.15 : to === "f" ? (kelvin - 273.15) * 9 / 5 + 32 : kelvin
+            return { ok: true, text: `${Number(converted.toPrecision(12))} ${to}`, detail: `${value} ${from} → ${to}` }
+        }
+        const groups = [
+            { mm: 0.001, cm: 0.01, m: 1, km: 1000, in: 0.0254, ft: 0.3048, yd: 0.9144, mi: 1609.344 },
+            { mg: 0.000001, g: 0.001, kg: 1, oz: 0.028349523125, lb: 0.45359237 },
+            { ms: 0.001, s: 1, min: 60, h: 3600, d: 86400 },
+            { b: 1, kb: 1000, mb: 1000000, gb: 1000000000, tb: 1000000000000, kib: 1024, mib: 1048576, gib: 1073741824 }
+        ]
+        const group = groups.find(candidate => candidate[from] !== undefined && candidate[to] !== undefined)
+        if (!group)
+            return { ok: false, error: `Cannot convert ${from} to ${to}` }
+        const converted = value * group[from] / group[to]
+        return { ok: true, text: `${Number(converted.toPrecision(12))} ${to}`, detail: `${value} ${from} → ${to}` }
+    }
+
     function calculate(text) {
         if (text.length === 0)
             return { ok: false, error: "" }
+        const conversion = convertUnits(text)
+        if (conversion)
+            return conversion
 
         const tokens = []
         let offset = 0
@@ -462,12 +686,20 @@ PanelWindow {
     }
 
     function resetCurrentResult() {
-        Qt.callLater(() => results.currentIndex = results.count > 0 ? 0 : -1)
+        results.currentIndex = -1
+        clipboardPreviewPath = ""
+        Qt.callLater(() => {
+            results.currentIndex = results.count > 0 ? 0 : -1
+            Qt.callLater(() => updateSelectedPreview())
+        })
     }
 
     function setMode(nextIndex, clearQuery) {
         modeIndex = (nextIndex + modes.length) % modes.length
         activationError = ""
+        confirmationKey = ""
+        actionIndex = 0
+        clipboardPreviewPath = ""
         resetCurrentResult()
         if (clearQuery) {
             searchText = ""
@@ -495,6 +727,9 @@ PanelWindow {
         searchText = ""
         query.text = ""
         activationError = ""
+        confirmationKey = ""
+        actionIndex = 0
+        clipboardPreviewPath = ""
     }
 
     function toggle() {
@@ -519,6 +754,62 @@ PanelWindow {
         fileProc.running = false
         fileProc.running = true
     }
+    function entryDetails(entry) {
+        if (!entry)
+            return ""
+        if (entry.kind === "application")
+            return (entry.payload.command || []).join(" ")
+        if (entry.kind === "file" || entry.kind === "web")
+            return entry.payload
+        if (entry.kind === "window")
+            return `${entry.label} ${entry.payload}`
+        return entry.label
+    }
+
+    function forgetHistory(key) {
+        const entries = historyAdapter.entries || ({})
+        const nextEntries = ({})
+        Object.keys(entries).forEach(existing => {
+            if (existing !== key)
+                nextEntries[existing] = entries[existing]
+        })
+        historyAdapter.entries = nextEntries
+    }
+
+    function executeAction(entry, actionId) {
+        if (!entry)
+            return
+        const token = actionToken(entry, actionId)
+        if (actionNeedsConfirmation(entry, actionId) && confirmationKey !== token) {
+            confirmationKey = token
+            return
+        }
+        confirmationKey = ""
+        if (actionId === "primary") {
+            activate(entry)
+        } else if (actionId === "copy") {
+            Quickshell.execDetached(["wl-copy", entryDetails(entry)])
+        } else if (actionId === "reveal") {
+            const slash = String(entry.payload || "").lastIndexOf("/")
+            Quickshell.execDetached(["xdg-open", slash > 0 ? entry.payload.slice(0, slash) : homeDirectory])
+        } else if (actionId === "delete" && entry.kind === "clipboard") {
+            clipboardDeleteProc.command = ["clipboard-delete", entry.payload]
+            clipboardDeleteProc.running = true
+        } else if (actionId === "close" && entry.kind === "window" && /^0x[0-9a-f]+$/i.test(entry.payload)) {
+            Hyprland.dispatch(`closewindow address:${entry.payload}`)
+            Qt.callLater(() => Hyprland.refreshToplevels())
+        } else if (actionId === "forget") {
+            forgetHistory(entry.key)
+        }
+    }
+
+    function executeSelectedAction() {
+        if (!selectedEntry || selectedActions.length === 0)
+            return
+        const index = Math.max(0, Math.min(selectedActions.length - 1, actionIndex))
+        executeAction(selectedEntry, selectedActions[index].id)
+    }
+
 
     function activate(entry) {
         if (!entry)
@@ -549,7 +840,7 @@ PanelWindow {
             }
             Hyprland.dispatch(`focuswindow address:${entry.payload}`)
         } else if (entry.kind === "web") {
-            Quickshell.execDetached(["xdg-open", webSearchBase + encodeURIComponent(entry.payload)])
+            Quickshell.execDetached(["xdg-open", entry.payload])
         } else {
             activationError = "This result cannot be opened"
             return
@@ -560,14 +851,30 @@ PanelWindow {
     }
 
     function activateCurrent() {
-        if (results.currentItem)
-            activate(results.currentItem.entry)
+        executeSelectedAction()
     }
 
     IpcHandler {
         target: "launcher"
 
         function toggle(): void { launcher.toggle() }
+        function search(text: string): void {
+            if (!launcher.visible)
+                launcher.open("applications")
+            query.text = text
+            Qt.callLater(() => query.forceActiveFocus())
+        }
+        function state(): string {
+            return JSON.stringify({
+                mode: launcher.mode,
+                query: launcher.searchText,
+                results: results.count,
+                selected: launcher.selectedEntry ? launcher.selectedEntry.label : "",
+                actions: launcher.selectedActions.map(action => action.id)
+            })
+        }
+        function activateSelected(): void { launcher.activateCurrent() }
+        function refreshPreview(): void { launcher.updateSelectedPreview() }
         function clipboard(): void {
             if (launcher.visible && launcher.mode === "clipboard")
                 launcher.close()
@@ -626,6 +933,29 @@ PanelWindow {
             }
         }
     }
+    Process {
+        id: clipboardPreviewProc
+
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode === 0)
+                launcher.clipboardPreviewRevision += 1
+            else
+                launcher.clipboardPreviewPath = ""
+        }
+    }
+
+    Process {
+        id: clipboardDeleteProc
+
+        onExited: (exitCode, exitStatus) => {
+            launcher.confirmationKey = ""
+            if (exitCode === 0)
+                launcher.loadClipboard()
+            else
+                launcher.activationError = "Clipboard entry could not be deleted"
+        }
+    }
+
 
     Process {
         id: fileProc
@@ -721,8 +1051,18 @@ PanelWindow {
                 focus: launcher.visible
 
                 onTextChanged: {
+                    const targetMode = text.length > 0 ? launcher.prefixMode(text.charAt(0)) : -1
+                    if (targetMode >= 0) {
+                        const remainder = text.slice(1).replace(/^\s+/, "")
+                        launcher.setMode(targetMode, false)
+                        if (text !== remainder) {
+                            text = remainder
+                            return
+                        }
+                    }
                     launcher.searchText = text
                     launcher.activationError = ""
+                    launcher.confirmationKey = ""
                     launcher.resetCurrentResult()
                 }
 
@@ -744,6 +1084,22 @@ PanelWindow {
                     } else if (event.key === Qt.Key_Up) {
                         results.currentIndex = Math.max(0, results.currentIndex - 1)
                         results.positionViewAtIndex(results.currentIndex, ListView.Contain)
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_Left) {
+                        launcher.actionIndex = Math.max(0, launcher.actionIndex - 1)
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_Right) {
+                        launcher.actionIndex = Math.min(launcher.selectedActions.length - 1, launcher.actionIndex + 1)
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
+                        const copyIndex = launcher.selectedActions.findIndex(action => action.id === "copy")
+                        if (copyIndex >= 0)
+                            launcher.executeAction(launcher.selectedEntry, "copy")
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_Delete) {
+                        const deleteIndex = launcher.selectedActions.findIndex(action => action.id === "delete")
+                        if (deleteIndex >= 0)
+                            launcher.executeAction(launcher.selectedEntry, "delete")
                         event.accepted = true
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                         launcher.activateCurrent()
@@ -770,6 +1126,8 @@ PanelWindow {
 
         Row {
             id: modeBar
+            visible: false
+            height: 0
             anchors {
                 top: searchBox.bottom
                 left: parent.left
@@ -812,22 +1170,210 @@ PanelWindow {
             }
         }
 
-        ListView {
-            id: results
+        Rectangle {
+            id: previewPane
             anchors {
-                top: modeBar.bottom
-                left: parent.left
+                top: searchBox.bottom
                 right: parent.right
                 bottom: footer.top
                 topMargin: 9
-                leftMargin: 16
                 rightMargin: 16
+                bottomMargin: 8
+            }
+            width: 340
+            radius: Theme.radiusMedium
+            color: Theme.backgroundDark
+            border.color: Theme.backgroundDarker
+            border.width: Theme.borderWidth
+
+            Column {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    top: parent.top
+                    margins: 18
+                }
+                spacing: 12
+
+                Row {
+                    width: parent.width
+                    spacing: 10
+
+                    Rectangle {
+                        width: 42
+                        height: 42
+                        radius: Theme.radiusSmall
+                        color: Theme.selection
+
+                        IconImage {
+                            anchors.centerIn: parent
+                            implicitWidth: 28
+                            implicitHeight: 28
+                            source: launcher.selectedEntry && launcher.selectedEntry.icon
+                                ? Quickshell.iconPath(launcher.selectedEntry.icon, true) : ""
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: !launcher.selectedEntry || !launcher.selectedEntry.icon
+                            text: launcher.selectedEntry ? launcher.selectedEntry.label.charAt(0).toUpperCase() : "?"
+                            color: Theme.accent
+                            font.family: Theme.fontSans
+                            font.pixelSize: Theme.fontBody + 2
+                            font.weight: Font.Bold
+                        }
+                    }
+
+                    Column {
+                        width: parent.width - 52
+                        spacing: 3
+
+                        Text {
+                            width: parent.width
+                            text: launcher.selectedEntry ? launcher.selectedEntry.label : "No result selected"
+                            color: Theme.foreground
+                            font.family: Theme.fontSans
+                            font.pixelSize: Theme.fontBody + 1
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: launcher.selectedEntry
+                                ? `${launcher.selectedEntry.kind.toUpperCase()}${launcher.selectedEntry.recent ? "  ·  RECENT" : ""}${launcher.selectedEntry.usageCount > 0 ? `  ·  USED ${launcher.selectedEntry.usageCount}×` : ""}`
+                                : "Navigate results to preview"
+                            color: launcher.selectedEntry && launcher.selectedEntry.recent ? Theme.accent : Theme.muted
+                            font.family: Theme.fontMono
+                            font.pixelSize: Theme.fontCaption
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: launcher.clipboardPreviewSource.length > 0
+                    width: parent.width
+                    height: visible ? 170 : 0
+                    radius: Theme.radiusSmall
+                    color: Theme.backgroundDarker
+                    clip: true
+
+                    Image {
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        source: launcher.clipboardPreviewSource
+                        fillMode: Image.PreserveAspectFit
+                        cache: false
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    text: launcher.selectedEntry ? launcher.selectedEntry.preview || launcher.selectedEntry.subtitle : ""
+                    color: Theme.foregroundSoft
+                    font.family: Theme.fontSans
+                    font.pixelSize: Theme.fontBody
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 4
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    width: parent.width
+                    text: launcher.selectedEntry ? launcher.selectedEntry.meta || launcher.selectedEntry.subtitle : ""
+                    color: Theme.muted
+                    font.family: Theme.fontMono
+                    font.pixelSize: Theme.fontCaption
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 4
+                    elide: Text.ElideMiddle
+                }
+
+                Text {
+                    visible: launcher.confirmationKey.length > 0
+                    width: parent.width
+                    text: "Press Enter again to confirm this destructive action"
+                    color: Theme.warning
+                    font.family: Theme.fontSans
+                    font.pixelSize: Theme.fontCaption
+                    wrapMode: Text.Wrap
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: 7
+
+                    Repeater {
+                        model: launcher.selectedActions
+
+                        Rectangle {
+                            required property var modelData
+                            required property int index
+                            width: parent ? parent.width : 0
+                            height: 34
+                            radius: Theme.radiusSmall
+                            color: index === launcher.actionIndex ? Theme.selection : actionHover.containsMouse ? Theme.backgroundDarker : "transparent"
+                            border.color: index === launcher.actionIndex ? Theme.accent : Theme.border
+                            border.width: Theme.borderWidth
+
+                            Text {
+                                anchors {
+                                    left: parent.left
+                                    verticalCenter: parent.verticalCenter
+                                    leftMargin: 10
+                                }
+                                text: parent.modelData.label
+                                color: parent.index === launcher.actionIndex ? Theme.foreground : Theme.foregroundSoft
+                                font.family: Theme.fontSans
+                                font.pixelSize: Theme.fontCaption
+                                font.weight: parent.index === launcher.actionIndex ? Font.DemiBold : Font.Normal
+                            }
+
+                            Text {
+                                anchors {
+                                    right: parent.right
+                                    verticalCenter: parent.verticalCenter
+                                    rightMargin: 10
+                                }
+                                text: parent.index === launcher.actionIndex ? "↵" : ""
+                                color: Theme.muted
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                            }
+
+                            MouseArea {
+                                id: actionHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onEntered: launcher.actionIndex = parent.index
+                                onClicked: launcher.executeAction(launcher.selectedEntry, parent.modelData.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ListView {
+            id: results
+            anchors {
+                top: searchBox.bottom
+                left: parent.left
+                right: previewPane.left
+                bottom: footer.top
+                topMargin: 9
+                leftMargin: 16
+                rightMargin: 8
                 bottomMargin: 8
             }
             model: resultModel
             spacing: 3
             clip: true
             currentIndex: -1
+            onCurrentIndexChanged: launcher.updateSelectedPreview()
+
 
             delegate: Rectangle {
                 id: result
@@ -835,9 +1381,24 @@ PanelWindow {
                 required property int index
                 property var entry: modelData
                 width: results.width
-                height: 58
+                height: result.modelData.showGroupHeader === true ? 86 : 58
                 radius: Theme.radiusMedium
                 color: ListView.isCurrentItem ? Theme.selection : resultHover.containsMouse ? Theme.backgroundDark : "transparent"
+                Text {
+                    visible: result.modelData.showGroupHeader === true
+                    anchors {
+                        top: parent.top
+                        left: parent.left
+                        topMargin: 6
+                        leftMargin: 10
+                    }
+                    text: result.modelData.group || ""
+                    color: Theme.accent
+                    font.family: Theme.fontSans
+                    font.pixelSize: Theme.fontCaption
+                    font.weight: Font.DemiBold
+                }
+
 
                 IconImage {
                     id: resultIcon
@@ -845,6 +1406,7 @@ PanelWindow {
                         left: parent.left
                         verticalCenter: parent.verticalCenter
                         leftMargin: 12
+                        verticalCenterOffset: result.modelData.showGroupHeader === true ? 14 : 0
                     }
                     implicitWidth: 30
                     implicitHeight: 30
@@ -868,6 +1430,7 @@ PanelWindow {
                         verticalCenter: parent.verticalCenter
                         leftMargin: 56
                         rightMargin: 10
+                        verticalCenterOffset: result.modelData.showGroupHeader === true ? 14 : 0
                     }
                     spacing: 2
 
@@ -897,6 +1460,7 @@ PanelWindow {
                         right: parent.right
                         verticalCenter: parent.verticalCenter
                         rightMargin: 12
+                        verticalCenterOffset: result.modelData.showGroupHeader === true ? 14 : 0
                     }
                     text: result.index === 0 ? "↵" : String(result.index + 1)
                     color: Theme.muted
@@ -910,7 +1474,7 @@ PanelWindow {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onEntered: results.currentIndex = result.index
-                    onClicked: launcher.activate(result.modelData)
+                    onClicked: launcher.executeAction(result.modelData, "primary")
                 }
             }
         }
@@ -952,7 +1516,7 @@ PanelWindow {
             Text {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                text: "tab mode   alt+1…7 direct   ↑↓ navigate   ↵ activate   esc close"
+                text: "> command   @ window   / file   = calculate   ? web   # clipboard   ↑↓ navigate   ←→ action"
                 color: Theme.muted
                 font.family: Theme.fontSans
                 font.pixelSize: Theme.fontCaption

@@ -329,6 +329,7 @@ in
       ui_font_size = typography.size.body;
       buffer_font_family = typography.mono;
       buffer_font_size = typography.size.body;
+      load_direnv = "direct";
       terminal.font_family = typography.mono;
     };
     themes.${theme.name} = themeDocument;

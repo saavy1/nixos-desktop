@@ -10,5 +10,7 @@
 
   networking.hostName = "desktop";
 
+  networking.firewall.interfaces.eno1.allowedUDPPorts = [ 5353 ];
+
   system.stateVersion = "26.05";
 }

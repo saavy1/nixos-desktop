@@ -10,11 +10,32 @@ let
       printf '%s' "$1" | cliphist decode | wl-copy
     '';
   };
+  clipboardDelete = pkgs.writeShellApplication {
+    name = "clipboard-delete";
+    runtimeInputs = [ pkgs.cliphist ];
+    text = ''
+      printf '%s' "$1" | cliphist delete
+    '';
+  };
+
+  clipboardPreview = pkgs.writeShellApplication {
+    name = "clipboard-preview";
+    runtimeInputs = [
+      pkgs.cliphist
+      pkgs.coreutils
+    ];
+    text = ''
+      printf '%s' "$1" | cliphist decode > "$2"
+    '';
+  };
+
 
 in
 {
   home.packages = [
     clipboardSelect
+    clipboardDelete
+    clipboardPreview
   ];
 
   programs.quickshell = {

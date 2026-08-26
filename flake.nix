@@ -9,13 +9,19 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    hermes-agent = {
-      url = "github:NousResearch/hermes-agent";
+    # No `follows`: upstream hardcodes an Electron-headers sha256 against
+    # the electron version of its OWN pinned nixpkgs (nix/desktop.nix).
+    # Forcing our nixpkgs in breaks that hash whenever either side bumps
+    # electron. Upstream CI validates this exact lock. Update with
+    # `nix flake update hermes-agent` or a full `nix flake update`; avoid a
+    # lone `nix flake update nixpkgs` while the two pins coincide, or
+    # hermes inherits an electron its sha rejects.
+    hermes-agent.url = "github:NousResearch/hermes-agent";
+    herdr = {
+      url = "github:herdrdev/herdr/v0.8.2";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.home-manager.follows = "home-manager";
     };
 
-    hermes-desktop.url = "github:NousResearch/hermes-agent/v2026.8.19";
 
     omp = {
       url = "github:can1357/oh-my-pi";
