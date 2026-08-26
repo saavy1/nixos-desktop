@@ -1,6 +1,7 @@
 { inputs, pkgs, ... }:
 let
   herdrPackage = inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  cuaDriverPackage = inputs.cua.packages.${pkgs.stdenv.hostPlatform.system}.cua-driver;
 in
 {
   imports = [
@@ -53,8 +54,19 @@ in
     gateway.enable = true;
     workingDirectory = "/home/saavy";
     environmentFiles = [ "/home/saavy/.config/hermes/environment" ];
+    environment.CUA_DRIVER_RS_ENABLE_WAYLAND = "1";
+    extraPackages = [
+      cuaDriverPackage
+      pkgs.at-spi2-core
+      pkgs.glib
+    ];
     restart = "always";
     restartSec = 5;
+
+    settings.toolsets = [
+      "hermes-cli"
+      "computer_use"
+    ];
 
     # One machine-level dashboard serves every Hermes profile. Basic auth is
     # loaded from the private environment file above; the separate token lets

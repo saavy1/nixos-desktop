@@ -17,6 +17,12 @@
     # lone `nix flake update nixpkgs` while the two pins coincide, or
     # hermes inherits an electron its sha rejects.
     hermes-agent.url = "github:NousResearch/hermes-agent";
+
+    # Follow upstream CUA development rather than a release tag. flake.lock
+    # records the reproducible snapshot; `nix flake update cua` advances it.
+    # Upstream's Nix build includes the portal/libei and wlroots Wayland paths.
+    cua.url = "github:trycua/cua";
+
     herdr = {
       url = "github:herdrdev/herdr/v0.8.2";
       inputs.nixpkgs.follows = "nixpkgs";
