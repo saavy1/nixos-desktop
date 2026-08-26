@@ -121,6 +121,8 @@ in
           cm = "auto";
           sdrbrightness = 1.2;
           sdrsaturation = 1.0;
+          supports_wide_color = 1;
+          supports_hdr = 1;
         }
       ];
 
@@ -128,6 +130,7 @@ in
         general.layout = "dwindle";
         dwindle.preserve_split = true;
         render.cm_auto_hdr = 1;
+        render.cm_enabled = true;
         input = {
           kb_layout = "us";
           follow_mouse = 1;

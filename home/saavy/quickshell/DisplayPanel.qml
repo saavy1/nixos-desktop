@@ -15,6 +15,8 @@ PanelWindow {
     property string actionKind: ""
     property string pendingDisableName: ""
     property var osd: null
+    property string pendingDisplayRollbackCommand: ""
+    property string pendingDisplayDescription: ""
 
     property var backlightDevices: []
     readonly property var selectedBacklight: backlightFor(selectedOutput)
@@ -133,6 +135,9 @@ PanelWindow {
                 mirrorOf: value.mirrorOf || "none",
                 availableModes: Array.isArray(value.availableModes) ? value.availableModes : [],
                 currentFormat: value.currentFormat || "",
+                colorManagementPreset: value.colorManagementPreset || "srgb",
+                sdrBrightness: Number(value.sdrBrightness) || 1,
+                sdrSaturation: Number(value.sdrSaturation) || 1,
                 internal: /^(eDP|LVDS|DSI)-/i.test(value.name || "")
             }
         }).sort((left, right) => {
@@ -212,13 +217,130 @@ PanelWindow {
         })
     }
 
-    function monitorRule(monitor, scale, vrr): string {
-        const mode = monitor.width > 0 && monitor.height > 0
-            ? monitor.refreshRate > 0 ? `${monitor.width}x${monitor.height}@${monitor.refreshRate.toFixed(3)}` : `${monitor.width}x${monitor.height}`
-            : "preferred"
-        const position = monitor.enabled ? `${monitor.x}x${monitor.y}` : "auto"
-        const mirror = monitor.mirrorOf && monitor.mirrorOf !== "none" ? `,mirror,${monitor.mirrorOf}` : ""
-        return `${monitor.name},${mode},${position},${scale},transform,${monitor.transform},vrr,${vrr}${mirror}`
+    function bitdepthFor(monitor): int {
+        if (!monitor)
+            return 8
+        return /2101010|16161616/i.test(monitor.currentFormat) ? 10 : 8
+    }
+
+    function colorModeFor(monitor): string {
+        if (!monitor)
+            return "sdr"
+        const preset = String(monitor.colorManagementPreset || "srgb").toLowerCase()
+        if (preset === "hdr" || preset === "hdredid")
+            return "hdr"
+        return preset === "srgb" ? "sdr" : "auto"
+    }
+
+    function availableRefreshPresets(monitor): var {
+        if (!monitor || !monitor.enabled)
+            return []
+        const prefix = `${monitor.width}x${monitor.height}@`
+        return [60, 120].filter(refresh => monitor.availableModes.some(mode => {
+            if (!String(mode).startsWith(prefix))
+                return false
+            const value = Number(String(mode).slice(prefix.length).replace(/Hz$/i, ""))
+            return isFinite(value) && Math.abs(value - refresh) < 0.5
+        }))
+    }
+
+    function luaQuote(value): string {
+        return JSON.stringify(String(value))
+    }
+
+    function monitorMode(monitor): string {
+        if (!monitor || !monitor.enabled || monitor.width <= 0 || monitor.height <= 0)
+            return "preferred"
+        return monitor.refreshRate > 0
+            ? `${monitor.width}x${monitor.height}@${monitor.refreshRate.toFixed(3)}`
+            : `${monitor.width}x${monitor.height}`
+    }
+
+    function monitorExpression(monitor, overrides): string {
+        const values = overrides || {}
+        const mode = values.mode !== undefined ? values.mode : monitorMode(monitor)
+        const position = values.position !== undefined
+            ? values.position
+            : monitor && monitor.enabled ? `${monitor.x}x${monitor.y}` : "auto"
+        const scale = values.scale !== undefined ? values.scale : monitor ? monitor.scale : 1
+        const transform = values.transform !== undefined ? values.transform : monitor ? monitor.transform : 0
+        const bitdepth = values.bitdepth !== undefined ? values.bitdepth : bitdepthFor(monitor)
+        const colorMode = values.cm !== undefined
+            ? values.cm
+            : colorModeFor(monitor) === "sdr" ? "srgb"
+            : colorModeFor(monitor) === "hdr" ? "hdr"
+            : "auto"
+        const sdrBrightness = values.sdrbrightness !== undefined
+            ? values.sdrbrightness
+            : monitor ? monitor.sdrBrightness : 1
+        const sdrSaturation = values.sdrsaturation !== undefined
+            ? values.sdrsaturation
+            : monitor ? monitor.sdrSaturation : 1
+        const vrr = values.vrr !== undefined ? values.vrr : monitor ? monitor.vrr : 0
+        const mirror = monitor && monitor.mirrorOf && monitor.mirrorOf !== "none"
+            ? `, mirror = ${luaQuote(monitor.mirrorOf)}`
+            : ""
+        const hdrCapabilities = monitor && String(monitor.description).startsWith("LG Electronics LG TV SSCR2")
+            ? ", supports_wide_color = 1, supports_hdr = 1"
+            : ""
+        return `hl.monitor({ output = ${luaQuote(monitor.name)}, mode = ${luaQuote(mode)}, position = ${luaQuote(position)}, scale = ${scale}, transform = ${transform}, bitdepth = ${bitdepth}, cm = ${luaQuote(colorMode)}, sdrbrightness = ${sdrBrightness}, sdrsaturation = ${sdrSaturation}, vrr = ${vrr}${mirror}${hdrCapabilities} })`
+    }
+
+    function requestDisplayChange(overrides, description): void {
+        const monitor = selectedOutput
+        if (!monitor || !monitor.enabled || actionRunning || pendingDisplayRollbackCommand.length > 0)
+            return
+        pendingDisplayRollbackCommand = monitorExpression(monitor, {})
+        pendingDisplayDescription = description
+        displayConfirmTimer.restart()
+        runAction(["hyprctl", "eval", monitorExpression(monitor, overrides)], description, "monitor")
+    }
+
+    function confirmDisplayChange(): void {
+        displayConfirmTimer.stop()
+        pendingDisplayRollbackCommand = ""
+        pendingDisplayDescription = ""
+        operationStatus = "Display change kept for this Hyprland session"
+    }
+
+    function revertDisplayChange(): void {
+        if (pendingDisplayRollbackCommand.length === 0)
+            return
+        const rollback = pendingDisplayRollbackCommand
+        displayConfirmTimer.stop()
+        pendingDisplayRollbackCommand = ""
+        pendingDisplayDescription = ""
+        runAction(["hyprctl", "eval", rollback], "Reverting display change", "monitor")
+    }
+
+    function setRefresh(refresh): void {
+        const monitor = selectedOutput
+        if (!monitor || availableRefreshPresets(monitor).indexOf(refresh) < 0)
+            return
+        requestDisplayChange(
+            { mode: `${monitor.width}x${monitor.height}@${refresh}` },
+            `Setting ${monitor.name} to ${refresh} Hz`
+        )
+    }
+
+    function setBitdepth(bitdepth): void {
+        if (bitdepth !== 8 && bitdepth !== 10)
+            return
+        const overrides = { bitdepth: bitdepth }
+        if (bitdepth === 8)
+            overrides.cm = "srgb"
+        requestDisplayChange(overrides, `Setting ${selectedName} to ${bitdepth}-bit output`)
+    }
+
+    function setColorMode(mode): void {
+        if (mode !== "sdr" && mode !== "auto" && mode !== "hdr")
+            return
+        requestDisplayChange({
+            bitdepth: 10,
+            cm: mode === "sdr" ? "srgb" : mode,
+            sdrbrightness: 1.2,
+            sdrsaturation: 1
+        }, `Setting ${selectedName} color mode to ${mode === "sdr" ? "SDR" : mode === "auto" ? "Auto HDR" : "HDR"}`)
     }
 
     function runAction(argv, description, kind): void {
@@ -237,7 +359,7 @@ PanelWindow {
             operationStatus = "That scale is not valid for the selected mode"
             return
         }
-        runAction(["hyprctl", "keyword", "monitor", monitorRule(monitor, scale, monitor.vrr)], `Setting ${monitor.name} scale to ${scale}×`, "monitor")
+        requestDisplayChange({ scale: scale }, `Setting ${monitor.name} scale to ${scale}×`)
     }
 
     function toggleVrr(): void {
@@ -247,7 +369,7 @@ PanelWindow {
             return
         }
         const nextVrr = monitor.vrr === 0 ? 1 : 0
-        runAction(["hyprctl", "keyword", "monitor", monitorRule(monitor, monitor.scale, nextVrr)], `${nextVrr ? "Enabling" : "Disabling"} adaptive sync on ${monitor.name}`, "monitor")
+        requestDisplayChange({ vrr: nextVrr }, `${nextVrr ? "Enabling" : "Disabling"} adaptive sync on ${monitor.name}`)
     }
 
     function requestMonitorEnabled(name, enabled): void {
@@ -255,7 +377,11 @@ PanelWindow {
         if (!monitor || monitor.enabled === enabled)
             return
         if (enabled) {
-            runAction(["hyprctl", "keyword", "monitor", `${monitor.name},preferred,auto,auto`], `Enabling ${monitor.name}`, "monitor")
+            runAction(
+                ["hyprctl", "eval", `hl.monitor({ output = ${luaQuote(monitor.name)}, mode = "preferred", position = "auto", scale = "auto" })`],
+                `Enabling ${monitor.name}`,
+                "monitor"
+            )
             return
         }
         if (activeMonitorCount <= 1) {
@@ -281,7 +407,11 @@ PanelWindow {
             return
         }
         pendingDisableName = ""
-        runAction(["hyprctl", "keyword", "monitor", `${monitor.name},disable`], `Disabling ${monitor.name}`, "monitor")
+        runAction(
+            ["hyprctl", "eval", `hl.monitor({ output = ${luaQuote(monitor.name)}, disabled = true })`],
+            `Disabling ${monitor.name}`,
+            "monitor"
+        )
     }
 
     function parseBacklights(text): void {
@@ -423,6 +553,26 @@ PanelWindow {
         function toggle(): void {
             panel.toggle()
         }
+        function refreshRate(refresh: int): void {
+            panel.setRefresh(refresh)
+        }
+
+        function bitdepth(depth: int): void {
+            panel.setBitdepth(depth)
+        }
+
+        function colorMode(mode: string): void {
+            panel.setColorMode(mode)
+        }
+
+        function keep(): void {
+            panel.confirmDisplayChange()
+        }
+
+        function revert(): void {
+            panel.revertDisplayChange()
+        }
+
 
         function close(): void {
             panel.close()
@@ -442,6 +592,13 @@ PanelWindow {
         repeat: false
         onTriggered: panel.requestRefresh(false)
     }
+    Timer {
+        id: displayConfirmTimer
+        interval: 15000
+        repeat: false
+        onTriggered: panel.revertDisplayChange()
+    }
+
 
     Process {
         id: monitorProc
@@ -668,6 +825,8 @@ PanelWindow {
             if (event.key === Qt.Key_Escape) {
                 if (panel.pendingDisableName.length > 0)
                     panel.cancelDisable()
+                else if (panel.pendingDisplayRollbackCommand.length > 0)
+                    panel.revertDisplayChange()
                 else
                     panel.close()
                 event.accepted = true
@@ -969,6 +1128,105 @@ PanelWindow {
                                 vertical: false
                                 width: parent.width
                             }
+                            Text {
+                                text: panel.selectedOutput
+                                    ? `SIGNAL  ·  ${panel.selectedOutput.refreshRate.toFixed(0)} HZ  ·  ${panel.bitdepthFor(panel.selectedOutput)}-BIT  ·  ${String(panel.selectedOutput.colorManagementPreset).toUpperCase()}  ·  ${panel.selectedOutput.currentFormat}`
+                                    : "SIGNAL"
+                                color: Theme.accent
+                                font.family: Theme.fontSans
+                                font.pixelSize: Theme.fontCaption
+                                font.weight: Font.DemiBold
+                            }
+
+                            Flow {
+                                width: parent.width
+                                spacing: 8
+
+                                Repeater {
+                                    model: panel.availableRefreshPresets(panel.selectedOutput)
+
+                                    ActionButton {
+                                        required property var modelData
+                                        label: `${Number(modelData)} Hz`
+                                        selected: panel.selectedOutput !== null && Math.abs(panel.selectedOutput.refreshRate - Number(modelData)) < 0.5
+                                        enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
+                                        onActivated: panel.setRefresh(Number(modelData))
+                                    }
+                                }
+
+                                ActionButton {
+                                    label: "8-bit"
+                                    selected: panel.bitdepthFor(panel.selectedOutput) === 8
+                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
+                                    onActivated: panel.setBitdepth(8)
+                                }
+
+                                ActionButton {
+                                    label: "10-bit"
+                                    selected: panel.bitdepthFor(panel.selectedOutput) === 10
+                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
+                                    onActivated: panel.setBitdepth(10)
+                                }
+
+                                ActionButton {
+                                    label: "SDR"
+                                    selected: panel.colorModeFor(panel.selectedOutput) === "sdr"
+                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
+                                    onActivated: panel.setColorMode("sdr")
+                                }
+
+                                ActionButton {
+                                    label: "Auto HDR"
+                                    selected: panel.colorModeFor(panel.selectedOutput) === "auto"
+                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
+                                    onActivated: panel.setColorMode("auto")
+                                }
+
+                                ActionButton {
+                                    label: "HDR on"
+                                    selected: panel.colorModeFor(panel.selectedOutput) === "hdr"
+                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
+                                    onActivated: panel.setColorMode("hdr")
+                                }
+                            }
+
+                            Row {
+                                visible: panel.pendingDisplayRollbackCommand.length > 0
+                                width: parent.width
+                                spacing: 8
+
+                                Text {
+                                    width: parent.width - keepDisplayButton.width - revertDisplayButton.width - 16
+                                    height: keepDisplayButton.height
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: `${panel.pendingDisplayDescription}  ·  reverting in 15 seconds`
+                                    color: Theme.warning
+                                    font.family: Theme.fontSans
+                                    font.pixelSize: Theme.fontCaption
+                                    elide: Text.ElideRight
+                                }
+
+                                ActionButton {
+                                    id: revertDisplayButton
+                                    label: "Revert"
+                                    destructive: true
+                                    enabled: !panel.actionRunning
+                                    onActivated: panel.revertDisplayChange()
+                                }
+
+                                ActionButton {
+                                    id: keepDisplayButton
+                                    label: "Keep"
+                                    enabled: !panel.actionRunning
+                                    onActivated: panel.confirmDisplayChange()
+                                }
+                            }
+
+                            PanelDivider {
+                                vertical: false
+                                width: parent.width
+                            }
+
 
                             Text {
                                 text: "SAFE SCALE"

@@ -17,6 +17,17 @@ in
     enable = true;
     enableFishIntegration = true;
   };
+  programs.mpv = {
+    enable = true;
+    config = {
+      vo = "gpu-next";
+      gpu-api = "vulkan";
+      gpu-context = "waylandvk";
+      hwdec = "auto-safe";
+      target-colorspace-hint = "yes";
+      target-colorspace-hint-mode = "source";
+    };
+  };
 
   programs.yazi.enable = true;
 
