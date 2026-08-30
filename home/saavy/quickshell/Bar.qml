@@ -373,6 +373,7 @@ Variants {
                         font.pixelSize: Theme.fontCaption
 
                         MouseArea {
+                            anchors.fill: parent
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
                             cursorShape: Qt.PointingHandCursor
                             onClicked: mouse => {

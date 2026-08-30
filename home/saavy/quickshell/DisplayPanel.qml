@@ -138,6 +138,7 @@ PanelWindow {
                 colorManagementPreset: value.colorManagementPreset || "srgb",
                 sdrBrightness: Number(value.sdrBrightness) || 1,
                 sdrSaturation: Number(value.sdrSaturation) || 1,
+                sdrMaxLuminance: Number(value.sdrMaxLuminance) || 80,
                 internal: /^(eDP|LVDS|DSI)-/i.test(value.name || "")
             }
         }).sort((left, right) => {
@@ -276,6 +277,9 @@ PanelWindow {
         const sdrSaturation = values.sdrsaturation !== undefined
             ? values.sdrsaturation
             : monitor ? monitor.sdrSaturation : 1
+        const sdrMaxLuminance = values.sdr_max_luminance !== undefined
+            ? values.sdr_max_luminance
+            : monitor ? monitor.sdrMaxLuminance : 80
         const vrr = values.vrr !== undefined ? values.vrr : monitor ? monitor.vrr : 0
         const mirror = monitor && monitor.mirrorOf && monitor.mirrorOf !== "none"
             ? `, mirror = ${luaQuote(monitor.mirrorOf)}`
@@ -283,7 +287,7 @@ PanelWindow {
         const hdrCapabilities = monitor && String(monitor.description).startsWith("LG Electronics LG TV SSCR2")
             ? ", supports_wide_color = 1, supports_hdr = 1"
             : ""
-        return `hl.monitor({ output = ${luaQuote(monitor.name)}, mode = ${luaQuote(mode)}, position = ${luaQuote(position)}, scale = ${scale}, transform = ${transform}, bitdepth = ${bitdepth}, cm = ${luaQuote(colorMode)}, sdrbrightness = ${sdrBrightness}, sdrsaturation = ${sdrSaturation}, vrr = ${vrr}${mirror}${hdrCapabilities} })`
+        return `hl.monitor({ output = ${luaQuote(monitor.name)}, mode = ${luaQuote(mode)}, position = ${luaQuote(position)}, scale = ${scale}, transform = ${transform}, bitdepth = ${bitdepth}, cm = ${luaQuote(colorMode)}, sdr_max_luminance = ${sdrMaxLuminance}, sdrbrightness = ${sdrBrightness}, sdrsaturation = ${sdrSaturation}, vrr = ${vrr}${mirror}${hdrCapabilities} })`
     }
 
     function requestDisplayChange(overrides, description): void {

@@ -15,6 +15,24 @@ PanelWindow {
     readonly property var playbackStreams: Pipewire.nodes.values
         .filter(node => node.audio !== null && node.isStream && !node.isSink)
         .sort((left, right) => audioPanel.streamName(left).localeCompare(audioPanel.streamName(right)))
+    property string macAvailability: "UNAVAILABLE"
+    property int macRevision: 0
+    property string macReceivedAt: ""
+    property int macStaleAfterMs: 15000
+    property string macError: ""
+    property var macRoutes: []
+    property var macDevices: []
+    property bool macHasEnvelope: false
+    property double macLastLineAtMs: 0
+    property double macClockTick: Date.now()
+    property string macWatchError: ""
+    readonly property var macNonLocalRoutes: macRoutes
+        .filter(route => route && route.is_local === false)
+        .slice(0, 4)
+    readonly property string macStatus: effectiveMacAvailability()
+    readonly property color macStatusTone: macStatus === "AVAILABLE"
+        ? Theme.success
+        : macStatus === "UNAVAILABLE" ? Theme.error : Theme.warning
 
     visible: PopupController.isOpen("audio")
     color: "transparent"
@@ -73,6 +91,162 @@ PanelWindow {
         return title || "Playback stream"
     }
 
+    function validAudioEnvelope(envelope): bool {
+        if (!envelope || typeof envelope !== "object"
+                || envelope.schema_version !== 1
+                || typeof envelope.revision !== "number"
+                || !isFinite(envelope.revision)
+                || Math.floor(envelope.revision) !== envelope.revision
+                || typeof envelope.received_at !== "string"
+                || typeof envelope.stale_after_ms !== "number"
+                || !isFinite(envelope.stale_after_ms)
+                || envelope.stale_after_ms <= 0
+                || typeof envelope.availability !== "string"
+                || (envelope.error !== null && typeof envelope.error !== "string")) {
+            return false
+        }
+
+        const supportedAvailability = [
+            "AVAILABLE",
+            "DEGRADED",
+            "STALE",
+            "UNAVAILABLE",
+            "UNSUPPORTED",
+            "UNKNOWN"
+        ]
+        if (supportedAvailability.indexOf(envelope.availability) < 0)
+            return false
+
+        if (envelope.state === null)
+            return envelope.availability === "UNAVAILABLE"
+
+        if (typeof envelope.state !== "object"
+                || envelope.state.schema_version !== 1
+                || !envelope.state.via
+                || typeof envelope.state.via !== "object"
+                || envelope.state.via.support !== "PRIVATE_UNKNOWN"
+                || !Array.isArray(envelope.state.via.routes)
+                || !envelope.state.focusrite
+                || typeof envelope.state.focusrite !== "object"
+                || !envelope.state.coreaudio
+                || typeof envelope.state.coreaudio !== "object"
+                || !Array.isArray(envelope.state.coreaudio.devices)) {
+            return false
+        }
+
+        const routesValid = envelope.state.via.routes.every(route =>
+            route
+                && typeof route === "object"
+                && (route.source_device === null || typeof route.source_device === "string")
+                && (route.source_channel === null || typeof route.source_channel === "string")
+                && typeof route.sink_id === "string"
+                && typeof route.sink_index === "number"
+                && isFinite(route.sink_index)
+                && typeof route.sink_type === "string"
+                && typeof route.is_local === "boolean")
+        const devicesValid = envelope.state.coreaudio.devices.every(device =>
+            device
+                && typeof device === "object"
+                && typeof device.name === "string")
+
+        return routesValid && devicesValid
+    }
+
+    function acceptAudioEnvelope(line): void {
+        const text = line.trim()
+        if (text.length === 0)
+            return
+
+        let envelope
+        try {
+            envelope = JSON.parse(text)
+        } catch (error) {
+            return
+        }
+
+        if (!validAudioEnvelope(envelope))
+            return
+
+        macAvailability = envelope.availability
+        macRevision = envelope.revision
+        macReceivedAt = envelope.received_at
+        macStaleAfterMs = Math.max(1000, envelope.stale_after_ms)
+        macError = envelope.error || ""
+        if (envelope.state !== null) {
+            macRoutes = envelope.state.via.routes.slice()
+            macDevices = envelope.state.coreaudio.devices.slice()
+        }
+        macHasEnvelope = true
+        macLastLineAtMs = Date.now()
+        macClockTick = macLastLineAtMs
+        macWatchError = ""
+    }
+
+    function effectiveMacAvailability(): string {
+        const now = macClockTick
+        if (!macHasEnvelope)
+            return "UNAVAILABLE"
+
+        if (macLastLineAtMs > 0 && now - macLastLineAtMs > macStaleAfterMs)
+            return "STALE"
+
+        if (macAvailability === "UNAVAILABLE"
+                || macAvailability === "UNSUPPORTED"
+                || macAvailability === "UNKNOWN") {
+            return "UNAVAILABLE"
+        }
+
+        if (macWatchError.length > 0)
+            return "DEGRADED"
+
+        return macAvailability === "AVAILABLE" ? "AVAILABLE"
+            : macAvailability === "STALE" ? "STALE"
+            : "DEGRADED"
+    }
+
+    function macStatusMessage(): string {
+        if (macError.length > 0)
+            return macError
+
+        if (macStatus === "STALE")
+            return "Snapshot is stale; showing the last known Mac routes."
+
+        if (macStatus === "UNAVAILABLE")
+            return macWatchError.length > 0 ? macWatchError : "Mac audio snapshot is unavailable."
+
+        if (macStatus === "DEGRADED")
+            return macWatchError.length > 0
+                ? macWatchError
+                : "Mac snapshot is partial; route details may be incomplete."
+
+        return ""
+    }
+
+    function coreAudioDeviceSummary(): string {
+        if (macDevices.length === 0)
+            return "COREAUDIO · no devices reported"
+
+        return `COREAUDIO · ${macDevices.map(device => device.name).join(" · ")}`
+    }
+
+    function routeSourceLabel(route): string {
+        const device = route.source_device && route.source_device.length > 0
+            ? route.source_device
+            : "Unknown source"
+        const channel = route.source_channel && route.source_channel.length > 0
+            ? ` / ${route.source_channel}`
+            : ""
+        return `${device}${channel}`
+    }
+
+    function routeSinkLabel(route): string {
+        const type = route.sink_type.toLowerCase()
+        const label = type === "soundcard"
+            ? "MAC AUDIO"
+            : type === "application" ? "MAC APPLICATION" : "MAC SINK"
+        return `${label} / ${route.sink_index}`
+    }
+
     function open(): void {
         PopupController.open("audio")
         Qt.callLater(() => keyScope.forceActiveFocus())
@@ -112,6 +286,42 @@ PanelWindow {
     PwObjectTracker {
         objects: audioPanel.playbackStreams
     }
+
+    Timer {
+        interval: 1000
+        running: true
+        repeat: true
+        onTriggered: audioPanel.macClockTick = Date.now()
+    }
+
+    Timer {
+        id: audioWatchRestartTimer
+
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (!audioWatchProcess.running)
+                audioWatchProcess.running = true
+        }
+    }
+
+    Process {
+        id: audioWatchProcess
+
+        command: ["/home/saavy/.local/bin/audioctl", "watch", "--json", "--interval-ms", "5000"]
+        stdout: SplitParser {
+            splitMarker: "\n"
+            onRead: data => audioPanel.acceptAudioEnvelope(data)
+        }
+        onExited: (exitCode, exitStatus) => {
+            audioPanel.macWatchError = audioPanel.macHasEnvelope
+                ? "Mac audio watcher stopped; showing the last known snapshot."
+                : "Mac audio watcher is unavailable; retrying in 5 seconds."
+            audioWatchRestartTimer.restart()
+        }
+    }
+
+    Component.onCompleted: audioWatchProcess.running = true
 
     component VolumeSlider: Item {
         id: slider
@@ -531,6 +741,163 @@ PanelWindow {
                         title: audioPanel.microphone ? "Microphone" : "No microphone available"
                         subtitle: audioPanel.microphone ? audioPanel.nodeName(audioPanel.microphone) : "Waiting for a default PipeWire source"
                         badge: "MIC"
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: Theme.backgroundDarker
+                    }
+                    Text {
+                        topPadding: 5
+                        text: "DANTE / MAC"
+                        color: Theme.accent
+                        font.family: Theme.fontSans
+                        font.pixelSize: Theme.fontCaption
+                        font.weight: Font.DemiBold
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: danteContent.implicitHeight + 24
+                        radius: Theme.radiusMedium
+                        color: Theme.backgroundDark
+                        border.color: audioPanel.macStatusTone
+                        border.width: Theme.borderWidth
+
+                        Column {
+                            id: danteContent
+
+                            anchors {
+                                left: parent.left
+                                right: parent.right
+                                top: parent.top
+                                margins: 12
+                            }
+                            spacing: 8
+
+                            Item {
+                                width: parent.width
+                                height: 20
+
+                                Rectangle {
+                                    anchors {
+                                        left: parent.left
+                                        verticalCenter: parent.verticalCenter
+                                    }
+                                    width: 10
+                                    height: 10
+                                    radius: 5
+                                    color: audioPanel.macStatusTone
+                                }
+
+                                Text {
+                                    anchors {
+                                        left: parent.left
+                                        verticalCenter: parent.verticalCenter
+                                        leftMargin: 20
+                                    }
+                                    text: audioPanel.macStatus
+                                    color: audioPanel.macStatusTone
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: Theme.fontCaption
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Text {
+                                    anchors {
+                                        right: parent.right
+                                        verticalCenter: parent.verticalCenter
+                                    }
+                                    text: `MAC / VIA · ${audioPanel.macRoutes.length} ${audioPanel.macRoutes.length === 1 ? "ROUTE" : "ROUTES"}`
+                                    color: Theme.foregroundSoft
+                                    font.family: Theme.fontMono
+                                    font.pixelSize: Theme.fontCaption
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: audioPanel.coreAudioDeviceSummary()
+                                color: audioPanel.macDevices.length > 0 ? Theme.foregroundSoft : Theme.muted
+                                font.family: Theme.fontSans
+                                font.pixelSize: Theme.fontCaption
+                                wrapMode: Text.Wrap
+                            }
+
+                            Column {
+                                width: parent.width
+                                spacing: 0
+
+                                Repeater {
+                                    model: audioPanel.macNonLocalRoutes
+
+                                    delegate: Item {
+                                        required property var modelData
+
+                                        width: parent.width
+                                        height: routeText.implicitHeight + 12
+
+                                        Rectangle {
+                                            anchors {
+                                                left: parent.left
+                                                right: parent.right
+                                                top: parent.top
+                                            }
+                                            height: 1
+                                            color: Theme.backgroundDarker
+                                        }
+
+                                        Text {
+                                            id: routeText
+
+                                            anchors {
+                                                left: parent.left
+                                                right: parent.right
+                                                verticalCenter: parent.verticalCenter
+                                                leftMargin: 8
+                                                rightMargin: 8
+                                            }
+                                            text: `${audioPanel.routeSourceLabel(parent.modelData)} → ${audioPanel.routeSinkLabel(parent.modelData)}`
+                                            color: Theme.foreground
+                                            font.family: Theme.fontMono
+                                            font.pixelSize: Theme.fontCaption
+                                            wrapMode: Text.Wrap
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    visible: audioPanel.macNonLocalRoutes.length === 0
+                                    width: parent.width
+                                    topPadding: 4
+                                    bottomPadding: 4
+                                    text: "No non-local Via routes reported"
+                                    color: Theme.muted
+                                    font.family: Theme.fontSans
+                                    font.pixelSize: Theme.fontCaption
+                                }
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: "INTERNAL MODEL · semantics unknown"
+                                color: Theme.muted
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                            }
+
+                            Text {
+                                visible: audioPanel.macStatusMessage().length > 0
+                                width: parent.width
+                                text: audioPanel.macStatusMessage()
+                                color: audioPanel.macStatus === "UNAVAILABLE" ? Theme.error : Theme.warning
+                                font.family: Theme.fontSans
+                                font.pixelSize: Theme.fontCaption
+                                wrapMode: Text.Wrap
+                            }
+                        }
                     }
 
                     Rectangle {

@@ -10,6 +10,13 @@ in
 
   programs.hyprlock.enable = true;
 
+  # Secret Service (org.freedesktop.secrets) provider. Apps such as Delta use
+  # it as their OS keychain for OAuth tokens; without it credential writes
+  # fail with "DBus error … The name is not activatable".
+  services.gnome.gnome-keyring.enable = true;
+  # Unlock the login keyring when greetd signs the user in.
+  security.pam.services.greetd.enableGnomeKeyring = true;
+
   fonts.packages = [
     pkgs.inter
     pkgs.jetbrains-mono

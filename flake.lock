@@ -67,6 +67,19 @@
         "type": "github"
       }
     },
+    "delta-tarball": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787784849,
+        "narHash": "sha256-+TuvwR5qy00LRcsTVn7BOnteW0ht8QXrcbPA0vOCSjk=",
+        "path": "/home/saavy/Downloads/delta-linux-x86_64.tar.gz",
+        "type": "path"
+      },
+      "original": {
+        "path": "/home/saavy/Downloads/delta-linux-x86_64.tar.gz",
+        "type": "path"
+      }
+    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": [
@@ -355,11 +368,11 @@
         "rust-overlay": "rust-overlay_2"
       },
       "locked": {
-        "lastModified": 1787674590,
-        "narHash": "sha256-jZuaK68nGfn4XTty9eVwD0mE/ZKKUbr2zx065WUK9b0=",
+        "lastModified": 1788027495,
+        "narHash": "sha256-UU86QWP5Wyi0yGQXsXHlgwKcbuQxOl6My+4hB7F5HbU=",
         "owner": "can1357",
         "repo": "oh-my-pi",
-        "rev": "eab72e88e447a4be45bea2bc302995844c0c51a2",
+        "rev": "b8ce33a58911c26bed1d84f0db9a5e2e727c49a2",
         "type": "github"
       },
       "original": {
@@ -421,6 +434,7 @@
     "root": {
       "inputs": {
         "cua": "cua",
+        "delta-tarball": "delta-tarball",
         "herdr": "herdr",
         "hermes-agent": "hermes-agent",
         "home-manager": "home-manager_2",

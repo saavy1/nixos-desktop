@@ -118,9 +118,15 @@ in
           position = "0x0";
           scale = 1;
           bitdepth = 10;
-          cm = "auto";
+          # Verified live 2026-08-28 on the LG C3 (DP-3): full "hdr" with
+          # sdr_max_luminance = 200 (~240-nit SDR white) is readable, while
+          # "auto"/wide with the same value wrecks saturation and darks, and
+          # the old default (80, ≈96 nits) was unusably dim. No DDC/CI or
+          # backlight exists on this TV, so this is the only brightness path.
+          cm = "hdr";
           sdrbrightness = 1.2;
           sdrsaturation = 1.0;
+          sdr_max_luminance = 200;
           supports_wide_color = 1;
           supports_hdr = 1;
         }

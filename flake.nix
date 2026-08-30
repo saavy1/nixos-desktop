@@ -33,6 +33,15 @@
       url = "github:can1357/oh-my-pi";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Zed Delta closed-beta tarball, downloaded manually to
+    # ~/Downloads/delta-linux-x86_64.tar.gz. A new download is re-pinned with
+    # `nix flake update delta-tarball` (narHash in flake.lock enforces the
+    # exact bytes); bump `version` in packages/delta/source-pin.nix alongside.
+    delta-tarball = {
+      url = "path:/home/saavy/Downloads/delta-linux-x86_64.tar.gz";
+      flake = false;
+    };
   };
 
   outputs =

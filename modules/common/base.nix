@@ -14,10 +14,12 @@
       "discord-unwrapped"
       "spotify"
       "spotify-unwrapped"
+      "delta"
       "steam"
       "steam-original"
       "steam-run"
       "steam-unwrapped"
+      "droid"
     ];
 
   environment.systemPackages = [ pkgs.git ];

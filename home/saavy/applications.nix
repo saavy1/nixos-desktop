@@ -1,10 +1,15 @@
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
 let
   helium = pkgs.callPackage ../../packages/helium.nix { };
+  delta = pkgs.callPackage ../../packages/delta {
+    inherit (inputs) delta-tarball;
+    version = (import ../../packages/delta/source-pin.nix).version;
+  };
 in
 {
   home.packages = [
     helium
+    delta
     pkgs.discord
     pkgs.libnotify
     pkgs.hyprshot

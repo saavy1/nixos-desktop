@@ -1,7 +1,9 @@
-{ inputs, pkgs, ... }:
+{ inputs, pkgs, config, ... }:
 let
   herdrPackage = inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
   cuaDriverPackage = inputs.cua.packages.${pkgs.stdenv.hostPlatform.system}.cua-driver;
+  droid = pkgs.callPackage ../../packages/droid { };
+  agentOrchestratorPackage = pkgs.callPackage ../../packages/agent-orchestrator { };
 in
 {
   imports = [
@@ -11,8 +13,9 @@ in
 
   home.packages = [
     herdrPackage
-    pkgs.codex
     pkgs.pi-coding-agent
+    droid
+    agentOrchestratorPackage
   ];
 
   # Hermes creates per-profile wrapper commands (for example `dev chat`) here.
@@ -33,11 +36,11 @@ in
     ];
   };
 
-  programs.omp = {
-    enable = true;
-    settings.startup.quiet = true;
-    settings.setupVersion = 1;
-  };
+  # OMP only: the package is installed here, but ~/.omp/agent/config.yml is
+  # owned by omp itself. Declaring programs.omp.settings would re-install the
+  # declared YAML over omp's runtime config on every home-manager switch
+  # (resetting setupVersion and /settings changes), forcing re-onboarding.
+  programs.omp.enable = true;
 
   # Single upstream input: module defaults wire CLI, services and desktop
   # from one build (programs.hermes-agent.desktop.package falls back to
@@ -47,8 +50,8 @@ in
     desktop.enable = true;
   };
 
-  # Keep Hermes available across logout/reboot and restart both long-running
-  # processes if they fail.  The NixOS user account enables linger.
+  # Keep the local Hermes messaging gateway available across logout/reboot.
+  # The Desktop application starts its own local backend when launched.
   services.hermes-agent = {
     enable = true;
     gateway.enable = true;
@@ -68,14 +71,31 @@ in
       "computer_use"
     ];
 
-    # One machine-level dashboard serves every Hermes profile. Basic auth is
-    # loaded from the private environment file above; the separate token lets
-    # Hermes Desktop attach to this backend instead of spawning another one.
-    backend = {
-      mode = "dashboard";
-      host = "0.0.0.0";
-      port = 9119;
-      sessionTokenFile = "/home/saavy/.config/hermes/dashboard-session-token";
+  };
+
+  # Profile-scoped gateway for the infra profile. Cron jobs and the kanban
+  # dispatcher run inside the profile's own gateway (the scheduler ticker is
+  # per-profile by design), so scheduled infra jobs (e.g. fleet-health-daily)
+  # and infra kanban dispatch need their own durable gateway. Linger is
+  # enabled for saavy, so this unit survives logout and reboot.
+  systemd.user.services."hermes-gateway-infra" = {
+    Unit = {
+      Description = "Hermes Agent Gateway (infra profile)";
+      After = [ "default.target" ];
+    };
+    Install.WantedBy = [ "default.target" ];
+    Service = {
+      Type = "simple";
+      WorkingDirectory = "/home/saavy";
+      Environment = [
+        "PATH=${config.programs.hermes-agent.package}/bin:${pkgs.coreutils}/bin:${pkgs.bash}/bin"
+      ];
+      ExecStart = "${config.programs.hermes-agent.package}/bin/hermes --profile infra gateway";
+      Restart = "always";
+      RestartSec = 5;
+      UMask = "0077";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
     };
   };
 }
