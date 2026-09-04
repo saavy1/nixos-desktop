@@ -1,9 +1,38 @@
-{ inputs, pkgs, config, ... }:
+{ inputs, pkgs, config, lib, ... }:
 let
   herdrPackage = inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
   cuaDriverPackage = inputs.cua.packages.${pkgs.stdenv.hostPlatform.system}.cua-driver;
   droid = pkgs.callPackage ../../packages/droid { };
   agentOrchestratorPackage = pkgs.callPackage ../../packages/agent-orchestrator { };
+  moshiHook = pkgs.callPackage ../../packages/moshi-hook.nix { };
+  enableMoshiHermesPlugin = pkgs.writeScript "enable-moshi-hermes-plugin" ''
+    #!${pkgs.python3.withPackages (ps: [ ps.pyyaml ])}/bin/python3
+    import os
+    import sys
+    from pathlib import Path
+
+    import yaml
+    class IndentedSafeDumper(yaml.SafeDumper):
+        def increase_indent(self, flow=False, indentless=False):
+            return super().increase_indent(flow, indentless=False)
+
+
+    config_path = Path(sys.argv[1])
+    with config_path.open() as config_file:
+        hermes_config = yaml.safe_load(config_file) or {}
+
+    enabled = hermes_config.setdefault("plugins", {}).setdefault("enabled", [])
+    if not isinstance(enabled, list):
+        raise TypeError("Hermes plugins.enabled must be a list")
+    if "moshi-hooks" not in enabled:
+        enabled.append("moshi-hooks")
+
+    temporary_path = config_path.with_suffix(".yaml.moshi")
+    with temporary_path.open("w") as config_file:
+        yaml.dump(hermes_config, config_file, Dumper=IndentedSafeDumper, sort_keys=False)
+    os.chmod(temporary_path, 0o600)
+    os.replace(temporary_path, config_path)
+  '';
 in
 {
   imports = [
@@ -22,6 +51,18 @@ in
   home.sessionPath = [ "$HOME/.local/bin" ];
 
   home.file.".agents/skills/herdr/SKILL.md".source = "${inputs.herdr}/skills/herdr/SKILL.md";
+  home.file.".local/bin/moshi-hook".source = "${moshiHook}/bin/moshi-hook";
+  home.file.".local/bin/moshi".source = "${moshiHook}/bin/moshi";
+  home.file.".hermes/plugins/moshi-hooks".source = "${moshiHook}/share/hermes/moshi-hooks";
+
+  # Agent modules can rewrite their runtime configuration during activation.
+  # Refresh their hooks afterward; Hermes uses a declarative plugin because
+  # Moshi's installer emits YAML incompatible with Hermes' Nix merge format.
+  home.activation.installMoshiHooks = lib.hm.dag.entryAfter [ "linkGeneration" "hermesAgentSetup" ] ''
+    $DRY_RUN_CMD ${moshiHook}/bin/moshi-hook install \
+      --target codex,omp,pi
+    $DRY_RUN_CMD ${enableMoshiHermesPlugin} ${config.services.hermes-agent.hermesHome}/config.yaml
+  '';
 
   xdg.desktopEntries.herdr = {
     name = "Herdr";
@@ -91,6 +132,21 @@ in
         "PATH=${config.programs.hermes-agent.package}/bin:${pkgs.coreutils}/bin:${pkgs.bash}/bin"
       ];
       ExecStart = "${config.programs.hermes-agent.package}/bin/hermes --profile infra gateway";
+      Restart = "always";
+      RestartSec = 5;
+      UMask = "0077";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
+  };
+
+  # Pairing and hook configuration are runtime state managed by moshi-hook;
+  # Home Manager owns the executable and keeps its bridge daemon available.
+  systemd.user.services.moshi-hook = {
+    Unit.Description = "Moshi agent hook bridge";
+    Install.WantedBy = [ "default.target" ];
+    Service = {
+      ExecStart = "${moshiHook}/bin/moshi-hook serve";
       Restart = "always";
       RestartSec = 5;
       UMask = "0077";

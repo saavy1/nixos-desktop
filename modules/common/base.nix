@@ -20,6 +20,7 @@
       "steam-run"
       "steam-unwrapped"
       "droid"
+      "moshi-hook"
     ];
 
   environment.systemPackages = [ pkgs.git ];
