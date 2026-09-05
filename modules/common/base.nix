@@ -19,6 +19,7 @@
       "steam-original"
       "steam-run"
       "steam-unwrapped"
+      "chatgpt-app"
       "droid"
       "moshi-hook"
     ];
