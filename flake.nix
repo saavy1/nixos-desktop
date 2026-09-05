@@ -59,6 +59,11 @@
         };
     in
     {
+      packages.x86_64-linux.codex =
+        nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/codex { };
+      packages.x86_64-linux.omp =
+        nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/omp { };
+
       nixosConfigurations.desktop = mkHost {
         hostModule = ./hosts/desktop;
       };

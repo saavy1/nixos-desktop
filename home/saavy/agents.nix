@@ -2,6 +2,8 @@
 let
   herdrPackage = inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
   cuaDriverPackage = inputs.cua.packages.${pkgs.stdenv.hostPlatform.system}.cua-driver;
+  codex = pkgs.callPackage ../../packages/codex { };
+  omp = pkgs.callPackage ../../packages/omp { };
   droid = pkgs.callPackage ../../packages/droid { };
   agentOrchestratorPackage = pkgs.callPackage ../../packages/agent-orchestrator { };
   moshiHook = pkgs.callPackage ../../packages/moshi-hook.nix { };
@@ -42,6 +44,7 @@ in
 
   home.packages = [
     herdrPackage
+    codex
     pkgs.pi-coding-agent
     droid
     agentOrchestratorPackage
@@ -54,6 +57,12 @@ in
   home.file.".local/bin/moshi-hook".source = "${moshiHook}/bin/moshi-hook";
   home.file.".local/bin/moshi".source = "${moshiHook}/bin/moshi";
   home.file.".hermes/plugins/moshi-hooks".source = "${moshiHook}/share/hermes/moshi-hooks";
+
+  # home.packages install into the home-manager profile, which fish's
+  # XDG_DATA_DIRS does not include; mirror codex's fish completion into
+  # $fish_complete_path so it autoloads after a switch.
+  home.file.".config/fish/completions/codex.fish".source =
+    "${codex}/share/fish/vendor_completions.d/codex.fish";
 
   # Agent modules can rewrite their runtime configuration during activation.
   # Refresh their hooks afterward; Hermes uses a declarative plugin because
@@ -77,11 +86,14 @@ in
     ];
   };
 
-  # OMP only: the package is installed here, but ~/.omp/agent/config.yml is
-  # owned by omp itself. Declaring programs.omp.settings would re-install the
-  # declared YAML over omp's runtime config on every home-manager switch
-  # (resetting setupVersion and /settings changes), forcing re-onboarding.
-  programs.omp.enable = true;
+  # The upstream module manages Home Manager integration, while the package is
+  # pinned directly from OMP's official release in packages/omp. OMP itself
+  # owns ~/.omp/agent/config.yml; declaring programs.omp.settings would replace
+  # runtime changes on every switch and force re-onboarding.
+  programs.omp = {
+    enable = true;
+    package = omp;
+  };
 
   # Single upstream input: module defaults wire CLI, services and desktop
   # from one build (programs.hermes-agent.desktop.package falls back to

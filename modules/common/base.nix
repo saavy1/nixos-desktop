@@ -23,7 +23,11 @@
       "moshi-hook"
     ];
 
-  environment.systemPackages = [ pkgs.git ];
+  environment.systemPackages = [
+    pkgs.bubblewrap
+    pkgs.git
+    pkgs.jq
+  ];
 
   networking.networkmanager.enable = true;
 

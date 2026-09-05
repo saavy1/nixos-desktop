@@ -14,5 +14,8 @@
   programs.gamescope.enable = true;
   programs.gamemode.enable = true;
 
-  environment.systemPackages = [ pkgs.vulkan-tools ];
+  environment.systemPackages = with pkgs; [
+    heroic
+    vulkan-tools
+  ];
 }
