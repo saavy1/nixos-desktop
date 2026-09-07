@@ -19,7 +19,7 @@ in
 
   fonts.packages = [
     pkgs.inter
-    pkgs.jetbrains-mono
+    pkgs.nerd-fonts.jetbrains-mono
   ];
 
   services.greetd = {

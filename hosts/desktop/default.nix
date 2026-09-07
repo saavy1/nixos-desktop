@@ -19,6 +19,7 @@
   programs.ssh.systemd-ssh-proxy.enable = false;
 
   networking.firewall.interfaces.eno1.allowedUDPPorts = [ 5353 ];
+  networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 9119 ];
 
   system.stateVersion = "26.05";
 }

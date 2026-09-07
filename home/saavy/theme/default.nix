@@ -5,6 +5,7 @@
     ./gtk.nix
     ./hyprland.nix
     ./hyprlock.nix
+    ./starship.nix
     ./vim.nix
     ./yazi.nix
     ./zed.nix

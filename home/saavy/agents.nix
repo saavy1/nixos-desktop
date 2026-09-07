@@ -58,12 +58,6 @@ in
   home.file.".local/bin/moshi".source = "${moshiHook}/bin/moshi";
   home.file.".hermes/plugins/moshi-hooks".source = "${moshiHook}/share/hermes/moshi-hooks";
 
-  # home.packages install into the home-manager profile, which fish's
-  # XDG_DATA_DIRS does not include; mirror codex's fish completion into
-  # $fish_complete_path so it autoloads after a switch.
-  home.file.".config/fish/completions/codex.fish".source =
-    "${codex}/share/fish/vendor_completions.d/codex.fish";
-
   # Agent modules can rewrite their runtime configuration during activation.
   # Refresh their hooks afterward; Hermes uses a declarative plugin because
   # Moshi's installer emits YAML incompatible with Hermes' Nix merge format.
@@ -124,6 +118,35 @@ in
       "computer_use"
     ];
 
+  };
+
+  # Expose the dashboard backend to authenticated Hermes Desktop clients on
+  # the tailnet. Credentials stay in the existing owner-only environment file.
+  systemd.user.services.hermes-dashboard = {
+    Unit = {
+      Description = "Hermes Dashboard Gateway";
+      After = [
+        "network-online.target"
+        "hermes-agent.service"
+      ];
+      Wants = [ "network-online.target" ];
+    };
+    Install.WantedBy = [ "default.target" ];
+    Service = {
+      Type = "simple";
+      WorkingDirectory = "/home/saavy";
+      Environment = [
+        "HERMES_HOME=/home/saavy/.hermes"
+        "PATH=${config.programs.hermes-agent.package}/bin:${pkgs.coreutils}/bin"
+      ];
+      EnvironmentFile = "/home/saavy/.config/hermes/environment";
+      ExecStart = "${config.programs.hermes-agent.package}/bin/hermes dashboard --host 0.0.0.0 --port 9119 --no-open --skip-build";
+      Restart = "always";
+      RestartSec = 5;
+      UMask = "0077";
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+    };
   };
 
   # Profile-scoped gateway for the infra profile. Cron jobs and the kanban

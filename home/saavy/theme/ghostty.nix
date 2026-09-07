@@ -1,12 +1,16 @@
 { lib, theme, ... }:
 let
-  inherit (theme) colors;
+  inherit (theme) colors typography;
   stripHash = lib.removePrefix "#";
   terminalPalette = lib.imap0 (index: color: "${toString index}=${color}") theme.terminal;
 in
 {
   programs.ghostty = {
-    settings.theme = theme.name;
+    settings = {
+      theme = theme.name;
+      font-family = typography.mono;
+      font-size = typography.size.body;
+    };
     themes.${theme.name} = {
       palette = terminalPalette;
       background = stripHash colors.background;

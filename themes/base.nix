@@ -20,7 +20,7 @@
 
   typography = {
     sans = "Inter";
-    mono = "JetBrains Mono";
+    mono = "JetBrainsMono Nerd Font";
     size = {
       caption = 11;
       body = 14;
