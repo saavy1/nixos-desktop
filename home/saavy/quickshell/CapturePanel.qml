@@ -115,12 +115,11 @@ PanelWindow {
             anchors {
                 top: parent.top
                 right: parent.right
-                bottom: parent.bottom
                 topMargin: Theme.outerMargin + Theme.barHeight + Theme.shellGap
                 rightMargin: Theme.outerMargin
-                bottomMargin: Theme.outerMargin
             }
             width: Math.min(640, panel.width - Theme.outerMargin * 2)
+            height: Math.min(650, panel.height - Theme.outerMargin * 2 - Theme.barHeight - Theme.shellGap)
 
             MouseArea {
                 anchors.fill: parent
@@ -251,11 +250,19 @@ PanelWindow {
 
                             Text {
                                 width: parent.width
-                                text: "Choose a display, window, or region. Saved captures also copy to the clipboard."
+                                text: "Choose what to capture and where it should go, then use the button below."
                                 color: Theme.muted
                                 font.family: Theme.fontSans
                                 font.pixelSize: Theme.fontCaption
                                 wrapMode: Text.Wrap
+                            }
+
+                            Text {
+                                text: "1  WHAT TO CAPTURE"
+                                color: Theme.foregroundSoft
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                                font.weight: Font.DemiBold
                             }
 
                             Flow {
@@ -263,7 +270,7 @@ PanelWindow {
                                 spacing: 8
 
                                 ActionButton {
-                                    label: "Display"
+                                    label: "Current display"
                                     selected: panel.state.screenshotMode === "output"
                                     enabled: !panel.state.busy
                                     onActivated: panel.state.screenshotMode = "output"
@@ -280,26 +287,42 @@ PanelWindow {
                                     enabled: !panel.state.busy
                                     onActivated: panel.state.screenshotMode = "region"
                                 }
+                            }
+
+                            Text {
+                                text: "2  DESTINATION"
+                                color: Theme.foregroundSoft
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                                font.weight: Font.DemiBold
+                            }
+
+                            Flow {
+                                width: parent.width
+                                spacing: 8
+
                                 ActionButton {
-                                    label: "Save"
+                                    label: "Save to Pictures"
                                     selected: panel.state.screenshotDestination === "save"
                                     enabled: !panel.state.busy
                                     onActivated: panel.state.screenshotDestination = "save"
                                 }
                                 ActionButton {
-                                    label: "Clipboard"
+                                    label: "Copy only"
                                     selected: panel.state.screenshotDestination === "clipboard"
                                     enabled: !panel.state.busy
                                     onActivated: panel.state.screenshotDestination = "clipboard"
                                 }
-                                ActionButton {
-                                    label: panel.state.busy ? "Selecting…" : "Capture"
-                                    selected: true
-                                    enabled: !panel.state.busy
-                                    onActivated: {
-                                        panel.close()
-                                        panel.state.takeScreenshot(panel.state.screenshotMode, panel.state.screenshotDestination)
-                                    }
+                            }
+
+                            ActionButton {
+                                width: parent.width
+                                label: panel.state.busy ? "Selection already in progress…" : "Capture screenshot"
+                                selected: true
+                                enabled: !panel.state.busy
+                                onActivated: {
+                                    panel.close()
+                                    panel.state.takeScreenshot(panel.state.screenshotMode, panel.state.screenshotDestination)
                                 }
                             }
                         }
@@ -348,11 +371,19 @@ PanelWindow {
                                 width: parent.width
                                 text: panel.state.recording
                                     ? `${panel.state.recordingLabel}  ·  ${panel.state.recordingFps} FPS  ·  ${panel.state.recordingAudio ? "desktop audio" : "silent"}`
-                                    : "GPU-accelerated AV1 recording to Videos. Region capture opens an interactive selector."
+                                    : "Choose an area and options. For a region, press Start and then drag a rectangle on screen. Recordings save to Videos."
                                 color: Theme.muted
                                 font.family: Theme.fontSans
                                 font.pixelSize: Theme.fontCaption
                                 wrapMode: Text.Wrap
+                            }
+
+                            Text {
+                                text: "1  AREA"
+                                color: Theme.foregroundSoft
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                                font.weight: Font.DemiBold
                             }
 
                             Flow {
@@ -360,17 +391,31 @@ PanelWindow {
                                 spacing: 8
 
                                 ActionButton {
-                                    label: "Display"
+                                    label: "Current display"
                                     selected: panel.state.recordingTarget === "output"
                                     enabled: !panel.state.recording && !panel.state.busy
                                     onActivated: panel.state.recordingTarget = "output"
                                 }
                                 ActionButton {
-                                    label: "Region"
+                                    label: "Select region"
                                     selected: panel.state.recordingTarget === "region"
                                     enabled: !panel.state.recording && !panel.state.busy
                                     onActivated: panel.state.recordingTarget = "region"
                                 }
+                            }
+
+                            Text {
+                                text: "2  OPTIONS"
+                                color: Theme.foregroundSoft
+                                font.family: Theme.fontMono
+                                font.pixelSize: Theme.fontCaption
+                                font.weight: Font.DemiBold
+                            }
+
+                            Flow {
+                                width: parent.width
+                                spacing: 8
+
                                 Repeater {
                                     model: [30, 60, 120]
 
@@ -397,6 +442,7 @@ PanelWindow {
                             }
 
                             ActionButton {
+                                width: parent.width
                                 label: panel.state.recording ? "Stop and save recording" : panel.state.busy ? "Selecting region…" : "Start recording"
                                 destructive: panel.state.recording
                                 selected: !panel.state.recording

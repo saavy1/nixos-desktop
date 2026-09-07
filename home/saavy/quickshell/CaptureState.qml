@@ -124,7 +124,10 @@ Scope {
         lastError = ""
         if (recordingTarget === "region") {
             status = "Select a recording region…"
-            selectionProc.command = ["slurp", "-f", "%wx%h+%x+%y"]
+            // Quickshell 0.3 leaves its QProcess stdin pipe open even when
+            // stdinEnabled is false. slurp treats a pipe as a list of preset
+            // regions and waits for EOF, so close stdin before execing it.
+            selectionProc.command = ["sh", "-c", "exec slurp -f '%wx%h+%x+%y' </dev/null"]
             selectionProc.running = true
         } else {
             beginRecording("")
@@ -253,6 +256,7 @@ Scope {
     Process {
         id: selectionProc
 
+        stdinEnabled: false
         property string output: ""
         property string failureText: ""
         stdout: StdioCollector {
