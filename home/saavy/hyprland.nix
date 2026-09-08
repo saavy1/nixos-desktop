@@ -143,6 +143,14 @@ in
         };
       };
 
+      window_rule = [
+        {
+          name = "cs2-low-latency";
+          match.class = "cs2";
+          immediate = true;
+        }
+      ];
+
       animation = [
         {
           leaf = "windows";
@@ -258,6 +266,32 @@ in
             "SUPER + F"
             (lua "hl.dsp.window.fullscreen({ mode = \"fullscreen\", action = \"toggle\" })")
             { description = "Windows · Toggle fullscreen"; }
+          ];
+        }
+        {
+          _args = [
+            "SUPER + SHIFT + F"
+            (lua ''
+              function()
+                local enabled = hl.get_config("general.allow_tearing")
+
+                -- Direct scanout bypasses Hyprland's HDR color-management path
+                -- for this SDR XWayland game, producing oversaturated output.
+                hl.config({
+                  render = { direct_scanout = 0 },
+                  general = { allow_tearing = not enabled },
+                })
+
+                hl.notification.create({
+                  text = enabled
+                    and "Gaming low-latency mode disabled"
+                    or "Gaming low-latency mode enabled",
+                  timeout = 2500,
+                  icon = enabled and "info" or "ok",
+                })
+              end
+            '')
+            { description = "Gaming · Toggle low-latency mode"; }
           ];
         }
         {
