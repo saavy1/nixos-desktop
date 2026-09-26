@@ -23,6 +23,9 @@
     # Upstream's Nix build includes the portal/libei and wlroots Wayland paths.
     cua.url = "github:trycua/cua";
 
+    # KiCad 10 MCP server; keep upstream's tested Rust/nixpkgs toolchain.
+    konnect.url = "github:mixelpixx/Konnect/v0.12.0";
+
     herdr = {
       url = "github:herdrdev/herdr/v0.9.0";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -59,10 +62,20 @@
         };
     in
     {
+      packages.x86_64-linux.miata-tooling = nixpkgs.legacyPackages.x86_64-linux.symlinkJoin {
+        name = "miata-tooling";
+        paths = builtins.attrValues (import ./packages/miata-tooling.nix {
+          pkgs = nixpkgs.legacyPackages.x86_64-linux;
+          inherit inputs;
+        });
+      };
       packages.x86_64-linux.codex =
         nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/codex { };
       packages.x86_64-linux.omp =
         nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/omp { };
+
+      packages.x86_64-linux.claude-desktop =
+        nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/claude-desktop { };
 
       nixosConfigurations.desktop = mkHost {
         hostModule = ./hosts/desktop;

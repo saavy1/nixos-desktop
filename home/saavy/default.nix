@@ -4,6 +4,7 @@
     ./agents.nix
     ./applications.nix
     ./editor.nix
+    ./electronics.nix
     ./fish.nix
     ./git.nix
     ./hardware-controls.nix

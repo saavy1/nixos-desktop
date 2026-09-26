@@ -2,6 +2,7 @@
 let
   helium = pkgs.callPackage ../../packages/helium.nix { };
   chatgptApp = pkgs.callPackage ../../packages/chatgpt-app { };
+  claudeDesktop = pkgs.callPackage ../../packages/claude-desktop { };
   delta = pkgs.callPackage ../../packages/delta {
     inherit (inputs) delta-tarball;
     version = (import ../../packages/delta/source-pin.nix).version;
@@ -12,14 +13,20 @@ in
     helium
     chatgptApp
     delta
+    claudeDesktop
     pkgs.discord
     pkgs.libnotify
     pkgs.hyprshot
     pkgs.gpu-screen-recorder
+    pkgs.obs-studio
     pkgs.spotify
     pkgs.slurp
     pkgs.zed-editor
     pkgs.wl-clipboard
+    # Image editors: Aseprite for pixel-level texture work (textures.gg's
+    # external editor), GIMP for photo-style edits.
+    pkgs.aseprite
+    pkgs.gimp
   ];
 
   programs.ghostty = {
@@ -60,6 +67,30 @@ in
       Persistent = true;
       RandomizedDelaySec = "10m";
       Unit = "chatgpt-update.service";
+    };
+  };
+
+  # Anthropic only publishes Debian packages for Linux, resolved from its apt
+  # repository index at update time. Same shape as the ChatGPT app above: the
+  # official payload lives outside the Nix store; claudeDesktop supplies the
+  # stable FHS wrapper and desktop entry.
+  systemd.user.services.claude-desktop-update = {
+    Unit.Description = "Update the Anthropic Claude Desktop app";
+    Service = {
+      Type = "oneshot";
+      ExecStart = "${claudeDesktop}/bin/claude-desktop-update";
+    };
+  };
+
+  systemd.user.timers.claude-desktop-update = {
+    Unit.Description = "Periodically update the Anthropic Claude Desktop app";
+    Install.WantedBy = [ "timers.target" ];
+    Timer = {
+      OnBootSec = "2m";
+      OnUnitActiveSec = "6h";
+      Persistent = true;
+      RandomizedDelaySec = "10m";
+      Unit = "claude-desktop-update.service";
     };
   };
 

@@ -3,7 +3,7 @@
 # Upstream distributes this as a single self-contained binary served from
 # https://downloads.factory.ai/factory-cli/releases/<version>/linux/<arch>/droid.
 # The official installer script (curl -fsSL https://app.factory.ai/cli | sh)
-# currently pins version 0.209.1; keep `version` and the SRI `sha256` in sync
+# currently pins version 0.225.2; keep `version` and the SRI `sha256` in sync
 # with the published release. The hash below was taken from the release's own
 # `droid.sha256` sidecar and verified against a fresh download.
 #
@@ -25,7 +25,7 @@
   patchelf,
 }:
 let
-  version = "0.209.1";
+  version = "0.225.2";
 in
 stdenv.mkDerivation {
   pname = "droid";
@@ -33,7 +33,7 @@ stdenv.mkDerivation {
 
   src = fetchurl {
     url = "https://downloads.factory.ai/factory-cli/releases/${version}/linux/x64/droid";
-    hash = "sha256-lJZvH2PLYOrmvJN0nd9jmtJGNe0kLpwnueO1b5GFSMI=";
+    hash = "sha256-7ZZmvV2es1QD42Ht16SDsi8n89UDaICIOpprku9egBQ=";
   };
 
   nativeBuildInputs = [ patchelf ];

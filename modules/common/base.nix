@@ -21,7 +21,12 @@
       "steam-unwrapped"
       "chatgpt-app"
       "droid"
+      "claude-code"
+      "claude-desktop"
       "moshi-hook"
+      "polylane"
+      "aseprite"
+      "ssbm-nucleus"
     ];
 
   environment.systemPackages = [

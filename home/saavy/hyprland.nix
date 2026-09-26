@@ -1,6 +1,19 @@
-{ lib, ... }:
+{
+  inputs,
+  lib,
+  pkgs,
+  osConfig,
+  ...
+}:
 let
   lua = lib.generators.mkLuaInline;
+
+  # Built against the exact compositor NixOS runs; the plugin refuses to load
+  # on any Hyprland ABI mismatch, so a Hyprland bump rebuilds it in lockstep.
+  cuaHyprlandPlugin = pkgs.callPackage ../../packages/cua-hyprland-plugin {
+    hyprland = osConfig.programs.hyprland.package;
+    cuaSrc = inputs.cua;
+  };
 
   focusBinds =
     map
@@ -110,6 +123,11 @@ in
     configType = "lua";
     systemd.enable = false;
 
+    # Cua Driver agent seats (Cua-Agent, Cua-Agent-2): agents drive their own
+    # cursor/keyboard instead of the human's. Replacing the module needs a
+    # fresh Hyprland session; a config reload only toggles the transport.
+    plugins = [ "${cuaHyprlandPlugin}/lib/cua/hyprland/cua-hyprland-plugin.so" ];
+
     settings = {
       monitor = [
         {
@@ -133,6 +151,7 @@ in
       ];
 
       config = {
+        plugin.cua.enabled = true;
         general.layout = "dwindle";
         dwindle.preserve_split = true;
         render.cm_auto_hdr = 1;

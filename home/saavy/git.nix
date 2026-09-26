@@ -1,3 +1,4 @@
+{ pkgs, ... }:
 {
   programs.git = {
     enable = true;
@@ -17,5 +18,6 @@
   programs.gh = {
     enable = true;
     settings.git_protocol = "https";
+    extensions = [ pkgs.gh-stack ];
   };
 }

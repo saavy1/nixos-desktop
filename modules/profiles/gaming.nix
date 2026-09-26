@@ -3,6 +3,7 @@ let
   nkit = pkgs.callPackage ../../packages/nkit { };
   proton-ge-10-34 = pkgs.callPackage ../../packages/proton-ge-10-34 { };
   slippi-launcher = pkgs.callPackage ../../packages/slippi-launcher { };
+  ssbm-nucleus = pkgs.callPackage ../../packages/ssbm-nucleus { };
 in
 {
   hardware.graphics = {
@@ -58,6 +59,8 @@ in
     nkit
     p7zip
     slippi-launcher
+    # Studied for textures.gg: the closest existing skin creator and installer.
+    ssbm-nucleus
     vulkan-tools
   ];
 }
