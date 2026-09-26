@@ -4,14 +4,15 @@ import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
 import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
 PanelWindow {
     id: root
     visible: root.displayed
     screen: PopupController.focusedScreen
     color: "transparent"
-    implicitWidth: 440
-    implicitHeight: 112
+    implicitWidth: 420
+    implicitHeight: 96
     focusable: false
     exclusionMode: ExclusionMode.Ignore
     exclusiveZone: 0
@@ -26,7 +27,7 @@ PanelWindow {
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-osd"
+    WlrLayershell.namespace: "qs-osd"
 
     readonly property var output: Pipewire.defaultAudioSink
     readonly property var microphone: Pipewire.defaultAudioSource
@@ -44,6 +45,7 @@ PanelWindow {
     property string lastOutputState: ""
     property string lastMicrophoneState: ""
     property string badge: "OSD"
+    property string icon: "circle-dot"
     property string heading: ""
     property string detail: ""
     property string valueText: ""
@@ -68,8 +70,9 @@ PanelWindow {
         return parts.length > 0 ? parts[parts.length - 1] : cleanPath
     }
 
-    function present(nextBadge: string, nextHeading: string, nextDetail: string, nextValue: string, nextLevel: real, progress: bool, nextHighlight, holdMilliseconds: int): void {
+    function present(nextBadge: string, nextIcon: string, nextHeading: string, nextDetail: string, nextValue: string, nextLevel: real, progress: bool, nextHighlight, holdMilliseconds: int): void {
         badge = nextBadge
+        icon = nextIcon
         heading = nextHeading
         detail = nextDetail
         valueText = nextValue
@@ -97,12 +100,13 @@ PanelWindow {
         const normalized = normalizedLevel(value)
         present(
             muted ? "MUTE" : "VOL",
+            muted ? "volume-x" : "volume-2",
             "Output volume",
             muted ? "Audio output is muted" : "Default audio output",
             muted ? "MUTED" : percentage(normalized),
             normalized,
             true,
-            muted ? Theme.error : Theme.accent,
+            muted ? Theme.danger : Theme.accent,
             1800
         )
     }
@@ -111,12 +115,13 @@ PanelWindow {
         const normalized = normalizedLevel(value)
         present(
             muted ? "MUTE" : "MIC",
+            muted ? "mic-off" : "mic",
             "Microphone",
             muted ? "Microphone is muted" : "Default audio input",
             muted ? "MUTED" : percentage(normalized),
             normalized,
             true,
-            muted ? Theme.error : Theme.accent,
+            muted ? Theme.danger : Theme.accent,
             1800
         )
     }
@@ -129,6 +134,7 @@ PanelWindow {
         const normalized = normalizedLevel(value)
         present(
             "SUN",
+            "sun",
             "Brightness",
             "Display backlight",
             percentage(normalized),
@@ -144,6 +150,7 @@ PanelWindow {
         const cleanArtist = String(artist || "").trim()
         present(
             playing ? "PLAY" : "PAUSE",
+            playing ? "play" : "pause",
             cleanTitle || "Media",
             cleanArtist || (playing ? "Now playing" : "Playback paused"),
             playing ? "PLAYING" : "PAUSED",
@@ -164,6 +171,7 @@ PanelWindow {
         const artist = String(player.trackArtist || "").trim()
         present(
             playing ? "PLAY" : stopped ? "STOP" : "PAUSE",
+            playing ? "play" : stopped ? "square" : "pause",
             title || "Media",
             artist || (playing ? "Now playing" : stopped ? "Playback stopped" : "Playback paused"),
             playing ? "PLAYING" : stopped ? "STOPPED" : "PAUSED",
@@ -178,6 +186,7 @@ PanelWindow {
         const name = fileName(path)
         present(
             "SHOT",
+            "camera",
             "Screenshot saved",
             name || "Saved to disk",
             "SAVED",
@@ -191,6 +200,7 @@ PanelWindow {
     function screenshotCopied(): void {
         present(
             "SHOT",
+            "clipboard-check",
             "Screenshot copied",
             "Image copied to the clipboard",
             "COPIED",
@@ -204,12 +214,13 @@ PanelWindow {
     function recording(recordingActive: bool): void {
         present(
             recordingActive ? "REC" : "STOP",
+            recordingActive ? "circle-dot" : "circle-stop",
             recordingActive ? "Recording started" : "Recording stopped",
             recordingActive ? "Screen capture is in progress" : "Screen capture finished",
             recordingActive ? "RECORDING" : "STOPPED",
             0,
             false,
-            recordingActive ? Theme.error : Theme.success,
+            recordingActive ? Theme.danger : Theme.success,
             2500
         )
     }
@@ -394,141 +405,129 @@ PanelWindow {
         }
     }
 
-        PanelCard {
-            id: card
+    Card {
+        id: card
 
-            x: 0
-            y: root.shown ? 0 : 14
-            width: parent.width
-            height: 104
-            opacity: root.shown ? 1 : 0
-            scale: root.shown ? 1 : 0.98
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: root.shown ? parent.height - height - Theme.space.xl : parent.height - height - Theme.space.xl + 14
+        width: parent.width - Theme.space.xxl
+        height: 60
+        radius: Theme.radius.pill
+        opacity: root.shown ? 1 : 0
+        scale: root.shown ? 1 : 0.98
 
-            Behavior on y {
-                NumberAnimation {
-                    duration: 180
-                    easing.type: Easing.OutCubic
-                }
+        Behavior on y {
+            NumberAnimation {
+                duration: Theme.motion.base
+                easing.type: Easing.OutCubic
             }
+        }
 
-            Behavior on opacity {
-                NumberAnimation {
-                    duration: 150
-                    easing.type: Easing.OutCubic
-                }
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Theme.motion.fast
+                easing.type: Easing.OutCubic
             }
+        }
 
-            Behavior on scale {
-                NumberAnimation {
-                    duration: 180
-                    easing.type: Easing.OutCubic
-                }
+        Behavior on scale {
+            NumberAnimation {
+                duration: Theme.motion.base
+                easing.type: Easing.OutCubic
             }
+        }
 
-            Rectangle {
-                id: badgeBlock
+        Rectangle {
+            id: iconDisc
 
-                anchors {
-                    left: parent.left
-                    verticalCenter: parent.verticalCenter
-                    leftMargin: 18
-                    verticalCenterOffset: root.hasProgress ? -7 : 0
-                }
-                width: 52
-                height: 52
-                radius: Theme.radiusMedium
-                color: Theme.withAlpha(root.highlight, 0.16)
-                border.color: Theme.withAlpha(root.highlight, 0.42)
-                border.width: Theme.borderWidth
-
-                Text {
-                    anchors.centerIn: parent
-                    text: root.badge
-                    color: root.highlight
-                    font.family: Theme.fontMono
-                    font.pixelSize: Theme.fontCaption
-                    font.weight: Font.Bold
-                }
+            anchors {
+                left: parent.left
+                leftMargin: Theme.space.md
+                verticalCenter: parent.verticalCenter
             }
+            width: 36
+            height: 36
+            radius: width / 2
+            color: Theme.withAlpha(root.highlight, Theme.alpha.tint)
 
-            Column {
-                anchors {
-                    left: badgeBlock.right
-                    right: valueLabel.left
-                    verticalCenter: badgeBlock.verticalCenter
-                    leftMargin: 16
-                    rightMargin: 14
-                }
-                spacing: 4
+            Icon {
+                anchors.centerIn: parent
+                name: root.icon
+                size: 17
+                color: root.highlight
+            }
+        }
 
-                Text {
-                    width: parent.width
+        Column {
+            anchors {
+                left: iconDisc.right
+                right: valueLabel.left
+                leftMargin: Theme.space.md
+                rightMargin: Theme.space.md
+                verticalCenter: parent.verticalCenter
+            }
+            spacing: root.hasProgress ? Theme.space.sm - 1 : 1
+
+            Item {
+                width: parent.width
+                height: headingLabel.implicitHeight
+
+                Label {
+                    id: headingLabel
+
+                    anchors.left: parent.left
+                    width: root.hasProgress ? Math.min(implicitWidth, parent.width) : parent.width
                     text: root.heading
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                    variant: "small"
+                    font.weight: Font.Medium
                 }
 
-                Text {
-                    width: parent.width
+                // With a meter the detail shares the heading line.
+                Label {
+                    visible: root.hasProgress
+                    anchors {
+                        left: headingLabel.right
+                        right: parent.right
+                        leftMargin: Theme.space.sm
+                        baseline: headingLabel.baseline
+                    }
                     text: root.detail
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
+                    variant: "caption"
+                    tone: "faint"
                     elide: Text.ElideMiddle
                 }
             }
 
-            Text {
-                id: valueLabel
-
-                anchors {
-                    right: parent.right
-                    verticalCenter: badgeBlock.verticalCenter
-                    rightMargin: 18
-                }
-                width: 78
-                horizontalAlignment: Text.AlignRight
-                text: root.valueText
-                color: root.highlight
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontCaption
-                font.weight: Font.Bold
-                elide: Text.ElideRight
+            Label {
+                visible: !root.hasProgress
+                width: parent.width
+                text: root.detail
+                variant: "caption"
+                tone: "faint"
+                elide: Text.ElideMiddle
             }
 
-            Rectangle {
-                id: progressTrack
-
+            Meter {
                 visible: root.hasProgress
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    bottom: parent.bottom
-                    leftMargin: 18
-                    rightMargin: 18
-                    bottomMargin: 13
-                }
-                height: 6
-                radius: 3
-                color: Theme.backgroundDarker
-                clip: true
-
-                Rectangle {
-                    height: parent.height
-                    width: parent.width * root.level
-                    radius: parent.radius
-                    color: root.highlight
-
-                    Behavior on width {
-                        NumberAnimation {
-                            duration: 140
-                            easing.type: Easing.OutCubic
-                        }
-                    }
-                }
+                width: parent.width
+                value: root.level
+                fillColor: root.highlight
             }
         }
+
+        Label {
+            id: valueLabel
+
+            anchors {
+                right: parent.right
+                rightMargin: Theme.space.xl
+                verticalCenter: parent.verticalCenter
+            }
+            width: Math.max(44, implicitWidth)
+            horizontalAlignment: Text.AlignRight
+            text: root.valueText
+            variant: root.hasProgress ? "numeric" : "label"
+            color: root.highlight
+        }
+    }
 }

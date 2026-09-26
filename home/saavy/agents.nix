@@ -56,12 +56,6 @@ in
   # Hermes creates per-profile wrapper commands (for example `dev chat`) here.
   home.sessionPath = [ "$HOME/.local/bin" ];
 
-  # Every cua-driver MCP (Claude, Codex, OMP, ...) should use the native
-  # Wayland backend: layer-shell agent cursor overlay and the Hyprland plugin's
-  # agent seats. Without it the driver falls back to XWayland/X11 input.
-  home.sessionVariables.CUA_DRIVER_RS_ENABLE_WAYLAND = "1";
-  systemd.user.sessionVariables.CUA_DRIVER_RS_ENABLE_WAYLAND = "1";
-
   home.file.".agents/skills/herdr/SKILL.md".source = "${inputs.herdr}/skills/herdr/SKILL.md";
   home.file.".local/bin/moshi-hook".source = "${moshiHook}/bin/moshi-hook";
   home.file.".local/bin/moshi".source = "${moshiHook}/bin/moshi";
@@ -113,7 +107,6 @@ in
     gateway.enable = true;
     workingDirectory = "/home/saavy";
     environmentFiles = [ "/home/saavy/.config/hermes/environment" ];
-    environment.CUA_DRIVER_RS_ENABLE_WAYLAND = "1";
     extraPackages = [
       cuaDriverPackage
       pkgs.at-spi2-core

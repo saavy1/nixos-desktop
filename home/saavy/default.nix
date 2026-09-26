@@ -3,6 +3,7 @@
   imports = [
     ./agents.nix
     ./applications.nix
+    ./cua.nix
     ./editor.nix
     ./electronics.nix
     ./fish.nix

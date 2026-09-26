@@ -1,6 +1,6 @@
 { theme, ... }:
 let
-  inherit (theme) colors;
+  inherit (theme) color;
 in
 {
   programs.starship = {
@@ -14,17 +14,17 @@ in
       right_format = "$time";
 
       palettes.${theme.name} = {
-        background = colors.background;
-        selection = colors.selection;
-        border = colors.border;
-        muted = colors.muted;
-        accent = colors.accent;
-        foreground = colors.foreground;
-        soft = colors.foregroundSoft;
-        warm = colors.foregroundWarm;
-        error = colors.error;
-        warning = colors.warning;
-        success = colors.success;
+        background = color.surface.base;
+        selection = color.surface.hover;
+        border = color.lineSolid;
+        muted = color.text.faint;
+        accent = color.accent;
+        foreground = color.text.base;
+        soft = color.text.soft;
+        warm = color.accent;
+        error = color.danger;
+        warning = color.warning;
+        success = color.success;
       };
 
       character = {

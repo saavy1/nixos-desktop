@@ -28,21 +28,23 @@ PanelWindow {
 
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-notification-popup"
+    WlrLayershell.namespace: "qs-notification-popup"
 
     ListView {
         id: notificationList
 
         anchors.fill: parent
         model: popup.notificationState ? popup.notificationState.popups : null
-        spacing: 8
+        spacing: Theme.space.sm
         clip: true
         interactive: contentHeight > height
         boundsBehavior: Flickable.StopAtBounds
 
         delegate: NotificationCard {
+            required property real deadline
 
             width: notificationList.width
+            expiresAt: deadline
             notificationState: popup.notificationState
             compact: true
             showInlineReply: false
@@ -52,7 +54,7 @@ PanelWindow {
             NumberAnimation {
                 properties: "opacity,x"
                 from: 0
-                duration: 160
+                duration: Theme.motion.base
                 easing.type: Easing.OutCubic
             }
         }
@@ -60,7 +62,7 @@ PanelWindow {
         displaced: Transition {
             NumberAnimation {
                 properties: "y"
-                duration: 140
+                duration: Theme.motion.fast
                 easing.type: Easing.OutCubic
             }
         }

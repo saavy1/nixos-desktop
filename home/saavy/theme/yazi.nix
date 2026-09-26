@@ -1,38 +1,38 @@
 { theme, ... }:
 let
-  inherit (theme) colors;
+  inherit (theme) color;
 in
 {
   programs.yazi.theme = {
-    app.overall.bg = colors.background;
+    app.overall.bg = color.surface.base;
     mgr = {
-      cwd = { fg = colors.accent; bold = true; };
-      find_keyword = { fg = colors.warning; bold = true; };
-      find_position = { fg = colors.foregroundSoft; };
-      symlink_target = { fg = colors.accent; italic = true; };
-      marker_copied = { fg = colors.success; bg = colors.success; };
-      marker_cut = { fg = colors.error; bg = colors.error; };
-      marker_marked = { fg = colors.warning; bg = colors.warning; };
-      marker_selected = { fg = colors.accent; bg = colors.accent; };
+      cwd = { fg = color.accent; bold = true; };
+      find_keyword = { fg = color.warning; bold = true; };
+      find_position = { fg = color.text.soft; };
+      symlink_target = { fg = color.accent; italic = true; };
+      marker_copied = { fg = color.success; bg = color.success; };
+      marker_cut = { fg = color.danger; bg = color.danger; };
+      marker_marked = { fg = color.warning; bg = color.warning; };
+      marker_selected = { fg = color.accent; bg = color.accent; };
       border_symbol = "│";
-      border_style = { fg = colors.border; };
+      border_style = { fg = color.lineSolid; };
     };
     indicator = {
-      parent = { fg = colors.muted; bg = colors.muted; };
-      current = { fg = colors.accent; bg = colors.accent; };
-      preview = { fg = colors.border; bg = colors.border; };
+      parent = { fg = color.text.faint; bg = color.text.faint; };
+      current = { fg = color.accent; bg = color.accent; };
+      preview = { fg = color.lineSolid; bg = color.lineSolid; };
     };
     tabs = {
-      active = { fg = colors.background; bg = colors.accent; bold = true; };
-      inactive = { fg = colors.foregroundSoft; bg = colors.backgroundDark; };
+      active = { fg = color.surface.base; bg = color.accent; bold = true; };
+      inactive = { fg = color.text.soft; bg = color.surface.sunk; };
     };
     mode = {
-      normal_main = { fg = colors.background; bg = colors.accent; bold = true; };
-      normal_alt = { fg = colors.accent; bg = colors.selection; };
-      select_main = { fg = colors.background; bg = colors.warning; bold = true; };
-      select_alt = { fg = colors.warning; bg = colors.selection; };
-      unset_main = { fg = colors.background; bg = colors.error; bold = true; };
-      unset_alt = { fg = colors.error; bg = colors.selection; };
+      normal_main = { fg = color.surface.base; bg = color.accent; bold = true; };
+      normal_alt = { fg = color.accent; bg = color.surface.hover; };
+      select_main = { fg = color.surface.base; bg = color.warning; bold = true; };
+      select_alt = { fg = color.warning; bg = color.surface.hover; };
+      unset_main = { fg = color.surface.base; bg = color.danger; bold = true; };
+      unset_alt = { fg = color.danger; bg = color.surface.hover; };
     };
   };
 }

@@ -1,13 +1,13 @@
 { lib, theme, ... }:
 let
-  inherit (theme) colors effects geometry;
+  inherit (theme) color effects geometry;
   stripHash = lib.removePrefix "#";
   rgb = color: "rgb(${stripHash color})";
   activeBorder = lib.generators.mkLuaInline ''
     {
       colors = {
-        "rgba(${stripHash colors.accent}ee)",
-        "rgba(${stripHash colors.foreground}ee)",
+        "rgba(${stripHash color.accent}ee)",
+        "rgba(${stripHash color.secondary}ee)",
       },
       angle = 45,
     }
@@ -20,17 +20,17 @@ in
         border_size = geometry.borderWidth;
         col = {
           active_border = activeBorder;
-          inactive_border = rgb colors.backgroundDarker;
+          inactive_border = rgb color.surface.deep;
         };
       };
 
       group.col = {
         border_active = activeBorder;
-        border_inactive = rgb colors.backgroundDarker;
+        border_inactive = rgb color.surface.deep;
       };
 
       decoration = {
-        rounding = geometry.radiusSmall;
+        rounding = geometry.radius.small;
         rounding_power = 3;
         blur = {
           enabled = effects.blur;
@@ -40,20 +40,20 @@ in
           xray = false;
         };
         shadow = {
-          enabled = effects.shadow;
+          enabled = effects.shadow != "none";
           range = 12;
           render_power = 3;
-          color = "rgba(00000055)";
+          color = "rgba(${stripHash color.surface.deep}88)";
         };
       };
     };
 
     layer_rule = [
       {
-        match.namespace = "^solitude-(audio|bar|bluetooth|calendar|capture|display|keybinds|launcher|media|network|notification-popup|notifications|osd|system|wallpaper-picker)$";
+        match.namespace = "^qs-.*$";
         blur = effects.blur;
         blur_popups = effects.blur;
-        ignore_alpha = 0.15;
+        ignore_alpha = 0.3;
       }
     ];
   };

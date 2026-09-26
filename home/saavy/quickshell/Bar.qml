@@ -5,6 +5,7 @@ import Quickshell.Services.Pipewire
 import Quickshell.Services.SystemTray
 import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
 Variants {
     id: root
@@ -12,6 +13,8 @@ Variants {
     required property var notificationState
     required property var mediaStatus
     required property var captureState
+    required property var agentUsage
+    required property var labState
     model: Quickshell.screens
 
     delegate: Component {
@@ -20,12 +23,16 @@ Variants {
 
             required property var modelData
             property bool trayExpanded: false
+            // workspace id -> name, from the workspace-namer service.
+            property var workspaceNames: ({})
             property string networkState: "unknown"
             readonly property var sink: Pipewire.defaultAudioSink
+            readonly property var sinkAudio: sink && sink.audio ? sink.audio : null
             readonly property var hyprMonitor: Hyprland.monitorFor(screen)
             readonly property var notifications: root.notificationState
             readonly property var media: root.mediaStatus
             readonly property var capture: root.captureState
+            readonly property bool recording: capture && capture.recording
 
             function togglePanel(target) {
                 PopupController.toggle(target)
@@ -49,7 +56,7 @@ Variants {
 
             WlrLayershell.layer: WlrLayer.Top
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-            WlrLayershell.namespace: "solitude-bar"
+            WlrLayershell.namespace: "qs-bar"
 
             SystemClock {
                 id: systemClock
@@ -59,7 +66,6 @@ Variants {
             PwObjectTracker {
                 objects: [bar.sink]
             }
-
 
             Process {
                 id: networkProc
@@ -78,88 +84,125 @@ Variants {
                 onTriggered: networkProc.running = true
             }
 
+            FileView {
+                path: `${Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"}/workspace-names.json`
+                preload: true
+                watchChanges: true
+                printErrors: false
+                onFileChanged: reload()
+                onLoaded: {
+                    try {
+                        bar.workspaceNames = JSON.parse(text()).workspaces || ({})
+                    } catch (error) {}
+                }
+            }
+
+            TrayMenu {
+                id: trayMenu
+
+                screen: bar.screen
+            }
 
             Rectangle {
-                id: leftPill
-
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                width: leftContent.implicitWidth + 16
-                height: parent.height
-                radius: Theme.radiusMedium
-                color: Theme.withAlpha(Theme.background, Theme.panelOpacity)
-                border.color: Theme.backgroundDarker
+                anchors.fill: parent
+                radius: Theme.radius.medium
+                color: Theme.withAlpha(Theme.surface.base, Theme.barOpacity)
                 border.width: Theme.borderWidth
+                border.color: Theme.line
+            }
+
+            // Left: system menu and workspaces.
+            Row {
+                anchors.left: parent.left
+                anchors.leftMargin: Theme.space.sm
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.space.sm
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    icon: "snowflake"
+                    tone: "base"
+                    active: PopupController.isOpen("system")
+                    onClicked: bar.togglePanel("system")
+                }
+
+                Hairline {
+                    anchors.verticalCenter: parent.verticalCenter
+                    vertical: true
+                }
 
                 Row {
-                    id: leftContent
-
-                    anchors.centerIn: parent
-                    spacing: 4
-
-                    Rectangle {
-                        width: 30
-                        height: 30
-                        color: PopupController.isOpen("system") || menuHover.containsMouse ? Theme.selection : "transparent"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "S"
-                            color: Theme.accent
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontBar
-                            font.weight: Font.Bold
-                        }
-
-                        MouseArea {
-                            id: menuHover
-
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: bar.togglePanel("system")
-                        }
-                    }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 2
 
                     Repeater {
                         model: Hyprland.workspaces
 
-                        delegate: Rectangle {
+                        delegate: Item {
                             id: workspace
 
                             required property var modelData
                             readonly property bool belongsToScreen: !modelData.monitor || modelData.monitor === bar.hyprMonitor
+                            readonly property bool focused: modelData.focused
+                            readonly property bool urgent: modelData.urgent
+                            readonly property bool occupied: modelData.toplevels ? modelData.toplevels.values.length > 0 : true
+                            readonly property string label: occupied ? bar.workspaceNames[String(modelData.id)] || "" : ""
 
                             visible: modelData.id > 0 && belongsToScreen
-                            width: 32
-                            height: 30
-                            radius: Theme.radiusSmall
-                            color: modelData.urgent ? Theme.error : modelData.focused ? Theme.selection : workspaceHover.containsMouse ? Theme.backgroundDark : "transparent"
+                            width: visible ? Math.max(30, content.implicitWidth + 20) : 0
+                            height: 28
 
                             Rectangle {
-                                anchors.bottom: parent.bottom
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                visible: workspace.modelData.focused
-                                width: 16
-                                height: 2
-                                radius: 1
-                                color: Theme.accent
+                                anchors.fill: parent
+                                radius: Theme.radius.small
+                                color: workspace.focused ? Theme.accent
+                                    : workspace.urgent ? Theme.dangerTint
+                                    : workspaceMouse.containsMouse ? Theme.hover
+                                    : "transparent"
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: Theme.motion.fast
+                                    }
+                                }
                             }
 
-                            Text {
+                            Row {
+                                id: content
+
                                 anchors.centerIn: parent
-                                text: workspace.modelData.id
-                                color: workspace.modelData.urgent ? Theme.background : workspace.modelData.focused ? Theme.foreground : Theme.foregroundSoft
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontBody
-                                font.weight: workspace.modelData.focused ? Font.DemiBold : Font.Normal
+                                anchors.verticalCenterOffset: workspace.occupied && !workspace.focused && workspace.label === "" ? -2 : 0
+                                spacing: 7
+
+                                Label {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: workspace.modelData.name || workspace.modelData.id
+                                    variant: "numeric"
+                                    tone: workspace.focused ? "accentText" : workspace.urgent ? "danger" : workspace.occupied ? "soft" : "disabled"
+                                }
+
+                                Label {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: workspace.label !== ""
+                                    text: workspace.label
+                                    variant: "small"
+                                    tone: workspace.focused ? "accentText" : workspace.urgent ? "danger" : "faint"
+                                }
+                            }
+
+                            Rectangle {
+                                visible: workspace.occupied && !workspace.focused && workspace.label === ""
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 4
+                                width: 3
+                                height: 3
+                                radius: 1.5
+                                color: workspace.urgent ? Theme.danger : Theme.text.faint
                             }
 
                             MouseArea {
-                                id: workspaceHover
+                                id: workspaceMouse
 
                                 anchors.fill: parent
                                 hoverEnabled: true
@@ -168,311 +211,312 @@ Variants {
                             }
                         }
                     }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: Hyprland.activeToplevel !== null
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: Hyprland.activeToplevel !== null
-                        width: Theme.barTitleWidth
-                        text: Hyprland.activeToplevel ? Hyprland.activeToplevel.title : ""
-                        color: Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        elide: Text.ElideRight
-                    }
                 }
             }
 
-            Rectangle {
-                id: clockPill
+            // Center: date and time, opens the calendar.
+            Item {
+                anchors.centerIn: parent
+                width: clock.implicitWidth + 28
+                height: 30
 
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                width: clockText.implicitWidth + 28
-                height: parent.height
-                radius: Theme.radiusMedium
-                color: Theme.withAlpha(Theme.background, Theme.panelOpacity)
-                border.color: PopupController.isOpen("calendar") ? Theme.accent : Theme.backgroundDarker
-                border.width: Theme.borderWidth
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Theme.radius.small
+                    color: PopupController.isOpen("calendar") ? Theme.selected : clockMouse.containsMouse ? Theme.hover : "transparent"
 
-                Text {
-                    id: clockText
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: Theme.motion.fast
+                        }
+                    }
+                }
+
+                Row {
+                    id: clock
 
                     anchors.centerIn: parent
-                    text: Qt.formatDateTime(systemClock.date, "ddd MMM d   HH:mm")
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBar
-                    font.weight: Font.DemiBold
+                    spacing: Theme.space.md
+
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Qt.formatDateTime(systemClock.date, "dddd, MMM d")
+                        variant: "display"
+                        font.pixelSize: Theme.fontSize.bar + 2
+                    }
+
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 3
+                        height: 3
+                        radius: 1.5
+                        color: Theme.text.faint
+                    }
+
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Qt.formatDateTime(systemClock.date, "HH:mm")
+                        variant: "numeric"
+                        font.pixelSize: Theme.fontSize.bar + 1
+                    }
                 }
 
                 MouseArea {
+                    id: clockMouse
+
                     anchors.fill: parent
+                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: bar.togglePanel("calendar")
                 }
             }
 
-            Rectangle {
-                id: rightPill
-
+            // Right: media, status and quick-panel buttons.
+            Row {
                 anchors.right: parent.right
+                anchors.rightMargin: Theme.space.sm
                 anchors.verticalCenter: parent.verticalCenter
-                width: rightContent.implicitWidth + 18
-                height: parent.height
-                radius: Theme.radiusMedium
-                color: Theme.withAlpha(Theme.background, Theme.panelOpacity)
-                border.color: PopupController.isOpen("audio") || PopupController.isOpen("bluetooth") || PopupController.isOpen("capture") || PopupController.isOpen("display") || PopupController.isOpen("media") || PopupController.isOpen("network") || PopupController.isOpen("notifications") ? Theme.accent : Theme.backgroundDarker
-                border.width: Theme.borderWidth
+                spacing: 2
 
-                Row {
-                    id: rightContent
+                Item {
+                    id: mediaChip
 
-                    anchors.centerIn: parent
-                    spacing: Theme.shellGap
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: bar.media && bar.media.hasPlayers
+                    width: visible ? mediaRow.implicitWidth + 20 : 0
+                    height: 30
 
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: bar.media && bar.media.hasPlayers
-                        width: visible ? Math.min(220, implicitWidth) : 0
-                        text: bar.media ? bar.media.title || bar.media.playerName : ""
-                        color: PopupController.isOpen("media") || bar.media && bar.media.playing ? Theme.accent : Theme.foregroundSoft
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Theme.radius.small
+                        color: PopupController.isOpen("media") ? Theme.selected : mediaMouse.containsMouse ? Theme.hover : "transparent"
+                    }
+
+                    Row {
+                        id: mediaRow
+
+                        anchors.centerIn: parent
+                        spacing: Theme.space.sm
+
+                        Icon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: bar.media && bar.media.playing ? "music" : "pause"
+                            color: bar.media && bar.media.playing ? Theme.text.base : Theme.text.faint
+                        }
+
+                        Label {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.min(200, implicitWidth)
+                            text: bar.media ? bar.media.title || bar.media.playerName : ""
+                            variant: "small"
+                            tone: bar.media && bar.media.playing ? "soft" : "faint"
+                        }
+                    }
+
+                    MouseArea {
+                        id: mediaMouse
+
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: mouse => {
+                            if (mouse.button === Qt.RightButton)
+                                bar.media.playPause()
+                            else if (mouse.button === Qt.MiddleButton)
+                                bar.media.next()
+                            else
+                                bar.togglePanel("media")
+                        }
+                        onWheel: wheel => {
+                            if (wheel.angleDelta.y > 0)
+                                bar.media.previous()
+                            else
+                                bar.media.next()
+                        }
+                    }
+                }
+
+                Hairline {
+                    anchors.verticalCenter: parent.verticalCenter
+                    vertical: true
+                    visible: mediaChip.visible
+                }
+
+                Item {
+                    width: mediaChip.visible ? 6 : 0
+                    height: 1
+                }
+
+                IconButton {
+                    readonly property var limit: root.agentUsage.tightest
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: limit !== null
+                    icon: "gauge"
+                    label: limit ? `${Math.round(limit.usedFraction * 100)}%` : ""
+                    tone: !limit || limit.usedFraction < 0.7 ? "soft" : limit.usedFraction < 0.9 ? "warning" : "danger"
+                    active: PopupController.isOpen("agents")
+                    onClicked: bar.togglePanel("agents")
+                }
+
+                IconButton {
+                    readonly property string status: root.labState.status
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    icon: "server"
+                    tone: status === "danger" ? "danger" : status === "warning" ? "warning" : "soft"
+                    badge: status === "danger"
+                    active: PopupController.isOpen("lab")
+                    onClicked: bar.togglePanel("lab")
+                }
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    icon: bar.networkState === "none" ? "wifi-off" : "wifi"
+                    tone: bar.networkState === "full" || bar.networkState === "unknown" ? "soft" : bar.networkState === "none" ? "danger" : "warning"
+                    active: PopupController.isOpen("network")
+                    onClicked: bar.togglePanel("network")
+                }
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    icon: "bluetooth"
+                    active: PopupController.isOpen("bluetooth")
+                    onClicked: bar.togglePanel("bluetooth")
+                }
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    icon: "monitor"
+                    active: PopupController.isOpen("display")
+                    onClicked: bar.togglePanel("display")
+                }
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    icon: bar.recording ? "circle-stop" : "circle-dot"
+                    label: bar.recording ? bar.capture.formatDuration(bar.capture.elapsedSeconds) : ""
+                    tone: bar.recording ? "danger" : "soft"
+                    active: PopupController.isOpen("capture")
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: mouse => {
+                        if (mouse.button === Qt.RightButton && bar.recording)
+                            bar.capture.stopRecording()
+                        else
+                            bar.togglePanel("capture")
+                    }
+                }
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    readonly property bool muted: bar.sinkAudio && bar.sinkAudio.muted
+
+                    icon: !bar.sinkAudio || muted ? "volume-x" : bar.sinkAudio.volume < 0.4 ? "volume-1" : "volume-2"
+                    label: bar.sinkAudio ? (muted ? "mute" : String(Math.round(bar.sinkAudio.volume * 100))) : "--"
+                    tone: muted ? "danger" : "soft"
+                    active: PopupController.isOpen("audio")
+                    wheelEnabled: true
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: mouse => {
+                        if (mouse.button === Qt.RightButton) {
+                            if (bar.sinkAudio)
+                                bar.sinkAudio.muted = !bar.sinkAudio.muted
+                        } else {
+                            bar.togglePanel("audio")
+                        }
+                    }
+                    onScrolled: wheel => {
+                        if (!bar.sinkAudio)
+                            return
+
+                        const change = wheel.angleDelta.y > 0 ? 0.05 : -0.05
+                        bar.sinkAudio.volume = Math.max(0, Math.min(1.5, bar.sinkAudio.volume + change))
+                    }
+                }
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    readonly property bool dnd: bar.notifications && bar.notifications.dnd
+
+                    icon: dnd ? "bell-off" : "bell"
+                    tone: dnd ? "warning" : "soft"
+                    badge: !dnd && bar.notifications && bar.notifications.count > 0
+                    active: PopupController.isOpen("notifications")
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: mouse => {
+                        if (mouse.button === Qt.RightButton)
+                            bar.notifications.toggleDnd()
+                        else
+                            bar.notifications.toggleCenter()
+                    }
+                }
+
+                Hairline {
+                    anchors.verticalCenter: parent.verticalCenter
+                    vertical: true
+                    visible: SystemTray.items.values.length > 0
+                }
+
+                Repeater {
+                    model: SystemTray.items
+
+                    delegate: Item {
+                        id: trayItem
+
+                        required property var modelData
+
+                        anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+                        visible: bar.trayExpanded
+                        width: visible ? 28 : 0
+                        height: 30
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: Theme.radius.small
+                            color: trayMenu.visible && trayMenu.trayItem === trayItem.modelData ? Theme.selected
+                                : trayMouse.containsMouse ? Theme.hover : "transparent"
+                        }
+
+                        Image {
+                            anchors.centerIn: parent
+                            width: 16
+                            height: 16
+                            source: trayItem.modelData.icon
+                            sourceSize.width: 16
+                            sourceSize.height: 16
+                            fillMode: Image.PreserveAspectFit
+                        }
 
                         MouseArea {
+                            id: trayMouse
+
                             anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
                             cursorShape: Qt.PointingHandCursor
                             onClicked: mouse => {
-                                if (mouse.button === Qt.RightButton)
-                                    bar.media.playPause()
-                                else if (mouse.button === Qt.MiddleButton)
-                                    bar.media.next()
+                                const item = trayItem.modelData
+                                if (mouse.button === Qt.MiddleButton)
+                                    item.secondaryActivate()
+                                else if (item.hasMenu && (mouse.button === Qt.RightButton || item.onlyMenu))
+                                    trayMenu.openFor(item, trayItem)
                                 else
-                                    bar.togglePanel("media")
+                                    item.activate()
                             }
-                            onWheel: wheel => {
-                                if (wheel.angleDelta.y > 0)
-                                    bar.media.previous()
-                                else
-                                    bar.media.next()
-                            }
+                            onWheel: wheel => trayItem.modelData.scroll(wheel.angleDelta.y / 120, false)
                         }
                     }
+                }
 
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: bar.media && bar.media.hasPlayers
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: bar.networkState === "full" ? "NET" : bar.networkState.toUpperCase()
-                        color: PopupController.isOpen("network") ? Theme.accent : bar.networkState === "full" ? Theme.foregroundSoft : bar.networkState === "none" ? Theme.error : Theme.warning
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: bar.togglePanel("network")
-                        }
-                    }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "BT"
-                        color: PopupController.isOpen("bluetooth") ? Theme.accent : Theme.foregroundSoft
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: bar.togglePanel("bluetooth")
-                        }
-                    }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "DSP"
-                        color: PopupController.isOpen("display") ? Theme.accent : Theme.foregroundSoft
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: bar.togglePanel("display")
-                        }
-                    }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: bar.capture && bar.capture.recording
-                            ? `REC ${bar.capture.formatDuration(bar.capture.elapsedSeconds)}`
-                            : "CAP"
-                        color: bar.capture && bar.capture.recording
-                            ? Theme.error
-                            : PopupController.isOpen("capture") ? Theme.accent : Theme.foregroundSoft
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: mouse => {
-                                if (mouse.button === Qt.RightButton && bar.capture && bar.capture.recording)
-                                    bar.capture.stopRecording()
-                                else
-                                    bar.togglePanel("capture")
-                            }
-                        }
-                    }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-
-
-                    Text {
-                        id: volume
-
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: bar.sink && bar.sink.audio
-                            ? bar.sink.audio.muted
-                                ? "MUTED"
-                                : `VOL ${Math.round(bar.sink.audio.volume * 100)}%`
-                            : "VOL --"
-                        color: PopupController.isOpen("audio") ? Theme.accent : bar.sink && bar.sink.audio && bar.sink.audio.muted ? Theme.muted : Theme.foregroundSoft
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: mouse => {
-                                if (mouse.button === Qt.RightButton) {
-                                    if (bar.sink && bar.sink.audio)
-                                        bar.sink.audio.muted = !bar.sink.audio.muted
-                                } else {
-                                    bar.togglePanel("audio")
-                                }
-                            }
-                            onWheel: wheel => {
-                                if (!bar.sink || !bar.sink.audio)
-                                    return
-
-                                const change = wheel.angleDelta.y > 0 ? 0.05 : -0.05
-                                bar.sink.audio.volume = Math.max(0, Math.min(1.5, bar.sink.audio.volume + change))
-                            }
-                        }
-                    }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: notifications && notifications.dnd ? "DND" : notifications && notifications.count > 0 ? `N ${notifications.count}` : "N"
-                        color: PopupController.isOpen("notifications") ? Theme.accent : notifications && notifications.dnd ? Theme.warning : notifications && notifications.count > 0 ? Theme.accent : Theme.foregroundSoft
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: mouse => {
-                                if (mouse.button === Qt.RightButton)
-                                    notifications.toggleDnd()
-                                else
-                                    notifications.toggleCenter()
-                            }
-                        }
-                    }
-
-                    PanelDivider {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: SystemTray.items.values.length > 0
-                    }
-
-                    Repeater {
-                        model: SystemTray.items
-
-                        delegate: Item {
-                            id: trayItem
-
-                            required property var modelData
-                            visible: bar.trayExpanded
-                            width: visible ? 22 : 0
-                            height: 30
-
-                            Image {
-                                anchors.centerIn: parent
-                                width: 18
-                                height: 18
-                                source: trayItem.modelData.icon
-                                sourceSize.width: 18
-                                sourceSize.height: 18
-                                fillMode: Image.PreserveAspectFit
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: mouse => {
-                                    if (mouse.button === Qt.MiddleButton)
-                                        trayItem.modelData.secondaryActivate()
-                                    else
-                                        trayItem.modelData.activate()
-                                }
-                            }
-                        }
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: SystemTray.items.values.length > 0
-                        text: bar.trayExpanded ? "›" : `TRAY ${SystemTray.items.values.length}`
-                        color: Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: bar.trayExpanded = !bar.trayExpanded
-                        }
-                    }
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: SystemTray.items.values.length > 0
+                    icon: bar.trayExpanded ? "chevron-right" : "chevron-left"
+                    label: bar.trayExpanded ? "" : String(SystemTray.items.values.length)
+                    tone: "faint"
+                    iconSize: 14
+                    onClicked: bar.trayExpanded = !bar.trayExpanded
                 }
             }
         }

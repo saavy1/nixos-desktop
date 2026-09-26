@@ -1,7 +1,4 @@
-{ inputs, lib, ... }:
-let
-  theme = import ../../themes { inherit lib; };
-in
+{ inputs, theme, ... }:
 {
   imports = [ inputs.home-manager.nixosModules.home-manager ];
 

@@ -1,6 +1,6 @@
 { lib, theme, ... }:
 let
-  inherit (theme) colors typography;
+  inherit (theme) color typography;
   stripHash = lib.removePrefix "#";
   terminalPalette = lib.imap0 (index: color: "${toString index}=${color}") theme.terminal;
 in
@@ -8,16 +8,16 @@ in
   programs.ghostty = {
     settings = {
       theme = theme.name;
-      font-family = typography.mono;
-      font-size = typography.size.body;
+      font-family = typography.code;
+      font-size = typography.size.code;
     };
     themes.${theme.name} = {
       palette = terminalPalette;
-      background = stripHash colors.background;
-      foreground = stripHash colors.foreground;
-      cursor-color = stripHash colors.accent;
-      selection-background = stripHash colors.selection;
-      selection-foreground = stripHash colors.foreground;
+      background = stripHash color.surface.base;
+      foreground = stripHash color.text.base;
+      cursor-color = stripHash color.accent;
+      selection-background = stripHash color.surface.hover;
+      selection-foreground = stripHash color.text.base;
     };
   };
 }

@@ -2,8 +2,11 @@ import Quickshell
 import Quickshell.Widgets
 import Quickshell.Services.Notifications
 import QtQuick
+import qs.ui
 
-PanelCard {
+// Notification toast ("C · toast"): icon tile, mono app name + time, summary,
+// body, optional image, action buttons, inline reply and a timeout line.
+Card {
     id: root
 
     required property var notification
@@ -11,6 +14,9 @@ PanelCard {
     required property real receivedAt
     property bool compact: false
     property bool showInlineReply: false
+    // Popup deadline (ms since epoch); 0 hides the timeout line.
+    property real expiresAt: 0
+    property real timeoutProgress: 0
 
     readonly property bool critical: notification && notification.urgency === NotificationUrgency.Critical
     readonly property string imageSource: notification && notification.image ? notification.image : ""
@@ -18,154 +24,165 @@ PanelCard {
         ? Quickshell.iconPath(notification.appIcon, true)
         : ""
 
-    implicitHeight: content.implicitHeight + 24
-    color: Theme.withAlpha(Theme.background, Math.min(1, Theme.panelOpacity + 0.05))
-    border.color: critical ? Theme.error : Theme.backgroundDarker
+    function restartTimeout(): void {
+        timeoutAnimation.stop()
+        const total = notificationState && notification ? notificationState.popupTimeout(notification) * 1000 : 0
+        if (expiresAt <= 0 || total <= 0) {
+            timeoutProgress = 0
+            return
+        }
+        const remaining = Math.max(0, expiresAt - Date.now())
+        timeoutProgress = Math.max(0, Math.min(1, remaining / total))
+        timeoutAnimation.from = timeoutProgress
+        timeoutAnimation.duration = remaining
+        timeoutAnimation.start()
+    }
+
+    onExpiresAtChanged: restartTimeout()
+    Component.onCompleted: restartTimeout()
+
+    implicitHeight: content.implicitHeight + Theme.space.lg * 2
+    surfaceOpacity: Math.min(1, Theme.panelOpacity + 0.05)
+
+    NumberAnimation {
+        id: timeoutAnimation
+
+        target: root
+        property: "timeoutProgress"
+        to: 0
+    }
 
     MouseArea {
         anchors.fill: parent
+    }
+
+    // Urgent notifications get a rust outline over the card's hairline.
+    Rectangle {
+        anchors.fill: parent
+        visible: root.critical
+        radius: root.radius
+        color: "transparent"
+        border.width: Theme.borderWidth
+        border.color: Theme.withAlpha(Theme.danger, 0.7)
+    }
+
+    Rectangle {
+        id: iconTile
+
+        anchors {
+            left: parent.left
+            top: parent.top
+            margins: Theme.space.lg
+        }
+        width: 36
+        height: 36
+        radius: Theme.radius.medium
+        color: appIcon.visible ? "transparent" : root.critical ? Theme.dangerTint : Theme.surface.raised
+
+        IconImage {
+            id: appIcon
+
+            anchors.centerIn: parent
+            implicitWidth: 30
+            implicitHeight: 30
+            source: root.appIconSource
+            visible: source.toString().length > 0
+        }
+
+        Icon {
+            anchors.centerIn: parent
+            visible: !appIcon.visible
+            name: root.critical ? "triangle-alert" : "message-square"
+            size: 17
+            color: root.critical ? Theme.danger : Theme.text.soft
+        }
     }
 
     Column {
         id: content
 
         anchors {
-            left: parent.left
+            left: iconTile.right
             right: parent.right
             top: parent.top
-            margins: 12
+            leftMargin: Theme.space.md
+            rightMargin: Theme.space.lg
+            topMargin: Theme.space.lg
         }
-        spacing: 10
+        spacing: Theme.space.sm
 
-        Item {
+        Column {
             width: parent.width
-            height: Math.max(44, titleBlock.implicitHeight)
+            spacing: Theme.space.xs
 
-            Rectangle {
-                id: iconBackground
-
-                anchors {
-                    left: parent.left
-                    top: parent.top
-                }
-                width: 44
-                height: 44
-                radius: Theme.radiusMedium
-                color: Theme.backgroundDark
-                border.color: critical ? Theme.error : Theme.border
-                border.width: Theme.borderWidth
-
-                IconImage {
-                    id: appIcon
-                    anchors.centerIn: parent
-                    implicitWidth: 30
-                    implicitHeight: 30
-                    source: root.appIconSource
-                    visible: source.toString().length > 0
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    visible: !appIcon.visible
-                    text: root.critical ? "!" : "●"
-                    color: root.critical ? Theme.error : Theme.accent
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontTitle
-                    font.weight: Font.Bold
-                }
-            }
-
-            Column {
-                id: titleBlock
-
-                anchors {
-                    left: iconBackground.right
-                    right: closeButton.left
-                    top: parent.top
-                    leftMargin: 10
-                    rightMargin: 8
-                }
-                spacing: 3
+            Item {
+                width: parent.width
+                height: 18
 
                 Row {
-                    spacing: 8
+                    anchors {
+                        left: parent.left
+                        right: closeButton.left
+                        rightMargin: Theme.space.sm
+                        verticalCenter: parent.verticalCenter
+                    }
+                    spacing: Theme.space.sm
 
-                    Text {
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, parent.width - timeLabel.width - parent.spacing)
                         text: root.notification ? (root.notification.appName || "Notification") : "Notification"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
-                        width: Math.min(implicitWidth, titleBlock.width - timeLabel.width - 8)
+                        variant: "label"
+                        tone: root.critical ? "danger" : "soft"
                     }
 
-                    Text {
+                    Label {
                         id: timeLabel
 
+                        anchors.verticalCenter: parent.verticalCenter
                         text: Qt.formatTime(new Date(root.receivedAt), "hh:mm")
-                        color: Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
+                        variant: "numeric"
+                        font.pixelSize: Theme.fontSize.caption
+                        font.weight: Font.Normal
+                        tone: "faint"
                     }
                 }
 
-                Text {
-                    width: parent.width
-                    text: root.notification ? (root.notification.summary || "Notification") : "Notification"
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                    maximumLineCount: 2
-                    wrapMode: Text.Wrap
-                }
-            }
+                IconButton {
+                    id: closeButton
 
-            Rectangle {
-                id: closeButton
-
-                anchors {
-                    right: parent.right
-                    top: parent.top
-                }
-                width: 30
-                height: 30
-                radius: Theme.radiusSmall
-                color: closeHover.containsMouse ? Theme.selection : "transparent"
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "×"
-                    color: Theme.error
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontTitle
-                }
-
-                MouseArea {
-                    id: closeHover
-
-                    anchors.fill: parent
-                    hoverEnabled: true
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: 24
+                    implicitHeight: 22
+                    iconSize: 14
+                    icon: "x"
+                    tone: "faint"
                     onClicked: root.notificationState.dismiss(root.notification)
                 }
             }
-        }
 
-        Text {
-            width: parent.width
-            visible: text.length > 0
-            text: root.notification ? root.notification.body : ""
-            textFormat: Text.StyledText
-            color: Theme.foregroundSoft
-            linkColor: Theme.accent
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.fontBody
-            wrapMode: Text.Wrap
-            maximumLineCount: root.compact ? 4 : 12
-            elide: Text.ElideRight
-            onLinkActivated: link => Qt.openUrlExternally(link)
+            Label {
+                width: parent.width
+                text: root.notification ? (root.notification.summary || "Notification") : "Notification"
+                font.weight: Font.Medium
+                maximumLineCount: 2
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                width: parent.width
+                visible: text.length > 0
+                text: root.notification ? root.notification.body : ""
+                textFormat: Text.StyledText
+                variant: "small"
+                tone: "soft"
+                linkColor: Theme.accent
+                wrapMode: Text.Wrap
+                maximumLineCount: root.compact ? 2 : 12
+                lineHeight: 1.15
+                onLinkActivated: link => Qt.openUrlExternally(link)
+            }
         }
 
         Image {
@@ -182,7 +199,7 @@ PanelCard {
 
         Flow {
             width: parent.width
-            spacing: 6
+            spacing: Theme.space.sm - 2
             visible: actionRepeater.count > 0
             height: visible ? childrenRect.height : 0
 
@@ -191,116 +208,76 @@ PanelCard {
 
                 model: root.notification ? root.notification.actions : []
 
-                delegate: Rectangle {
+                delegate: Button {
                     required property var modelData
+                    required property int index
 
-                    width: Math.max(72, actionText.implicitWidth + 24)
-                    height: 34
-                    radius: Theme.radiusSmall
-                    color: actionHover.containsMouse ? Theme.selection : Theme.backgroundDark
-                    border.color: actionHover.containsMouse ? Theme.accent : Theme.border
-                    border.width: Theme.borderWidth
-
-                    Text {
-                        id: actionText
-
-                        anchors.centerIn: parent
-                        text: modelData.text || "Open"
-                        color: Theme.foreground
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        elide: Text.ElideRight
-                        width: Math.min(implicitWidth, 180)
-                    }
-
-                    MouseArea {
-                        id: actionHover
-
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: root.notificationState.invokeAction(root.notification, modelData)
-                    }
+                    compact: true
+                    variant: index === 0 ? "primary" : "ghost"
+                    text: modelData.text || "Open"
+                    width: Math.min(200, Math.max(64, implicitWidth))
+                    onClicked: root.notificationState.invokeAction(root.notification, modelData)
                 }
             }
         }
 
-        Item {
+        Row {
             width: parent.width
-            height: visible ? 38 : 0
+            height: visible ? replyInput.implicitHeight : 0
             visible: root.showInlineReply && root.notification && root.notification.hasInlineReply
+            spacing: Theme.space.sm
 
-            Rectangle {
-                anchors.fill: parent
-                radius: Theme.radiusSmall
-                color: Theme.backgroundDark
-                border.color: replyInput.activeFocus ? Theme.accent : Theme.border
-                border.width: Theme.borderWidth
+            function send(): void {
+                if (root.notificationState.sendReply(root.notification, replyInput.text))
+                    replyInput.text = ""
             }
 
-            TextInput {
+            TextField {
                 id: replyInput
 
-                anchors {
-                    left: parent.left
-                    right: sendButton.left
-                    verticalCenter: parent.verticalCenter
-                    leftMargin: 10
-                    rightMargin: 8
-                }
-                clip: true
-                color: Theme.foreground
-                selectionColor: Theme.selection
-                selectedTextColor: Theme.foreground
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontBody
-                onAccepted: sendButton.send()
-
-                Text {
-                    anchors.fill: parent
-                    visible: replyInput.text.length === 0 && !replyInput.activeFocus
-                    text: root.notification && root.notification.inlineReplyPlaceholder
-                        ? root.notification.inlineReplyPlaceholder
-                        : "Reply…"
-                    color: Theme.muted
-                    font: replyInput.font
-                    verticalAlignment: Text.AlignVCenter
-                }
+                width: parent.width - sendButton.width - parent.spacing
+                placeholder: root.notification && root.notification.inlineReplyPlaceholder
+                    ? root.notification.inlineReplyPlaceholder
+                    : "Reply…"
+                onAccepted: parent.send()
             }
 
-            Rectangle {
+            Button {
                 id: sendButton
 
-                anchors {
-                    right: parent.right
-                    top: parent.top
-                    bottom: parent.bottom
-                }
-                width: 58
-                radius: Theme.radiusSmall
-                color: sendHover.containsMouse ? Theme.selection : "transparent"
-
-                function send(): void {
-                    if (root.notificationState.sendReply(root.notification, replyInput.text))
-                        replyInput.text = ""
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: "Send"
-                    color: Theme.accent
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                    font.weight: Font.DemiBold
-                }
-
-                MouseArea {
-                    id: sendHover
-
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: sendButton.send()
-                }
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Send"
+                icon: "send"
+                variant: "subtle"
+                onClicked: parent.send()
             }
+        }
+    }
+
+    // Popup timeout: a 2px lichen line draining along the bottom edge.
+    Item {
+        visible: root.expiresAt > 0 && root.timeoutProgress > 0
+        anchors {
+            left: parent.left
+            right: parent.right
+            bottom: parent.bottom
+            leftMargin: Theme.space.lg
+            rightMargin: Theme.space.lg
+            bottomMargin: Theme.space.sm - 2
+        }
+        height: 2
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 1
+            color: Theme.line
+        }
+
+        Rectangle {
+            width: parent.width * root.timeoutProgress
+            height: parent.height
+            radius: 1
+            color: Theme.secondary
         }
     }
 }

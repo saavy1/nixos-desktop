@@ -1,10 +1,10 @@
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
-PanelWindow {
-    id: panel
+PopupPanel {
+    id: root
 
     property bool hasAdapter: false
     property string adapterAddress: ""
@@ -34,23 +34,10 @@ PanelWindow {
         return `${pairedDevices.length} paired · ${connectedCount} connected`
     }
 
-    visible: PopupController.isOpen("bluetooth")
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    exclusiveZone: 0
-    focusable: visible
-    screen: PopupController.focusedScreen
-
-    anchors {
-        top: true
-        bottom: true
-        left: true
-        right: true
-    }
-
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-bluetooth"
+    name: "bluetooth"
+    title: "Bluetooth"
+    subtitle: adapterSummary.toLowerCase()
+    cardWidth: 460
 
     function outputLines(text): var {
         return text.split("\n").map(line => line.trim()).filter(line => line.length > 0)
@@ -214,7 +201,7 @@ PanelWindow {
     }
 
     function startNextDeviceInfo(): void {
-        if (infoProc.running || pendingInfo.length === 0 || !visible)
+        if (infoProc.running || pendingInfo.length === 0 || !shown)
             return
         const queue = pendingInfo.slice()
         const address = queue.shift()
@@ -229,27 +216,9 @@ PanelWindow {
     }
 
     function requestRefresh(): void {
-        if (!visible || refreshing || actionRunning)
+        if (!shown || refreshing || actionRunning)
             return
         adapterProc.running = true
-    }
-
-    function open(): void {
-        PopupController.open("bluetooth")
-        operationStatus = ""
-        requestRefresh()
-    }
-
-    function close(): void {
-        pendingRemoval = ""
-        PopupController.close("bluetooth")
-    }
-
-    function toggle(): void {
-        if (visible)
-            close()
-        else
-            open()
     }
 
     function runAction(argv, description): void {
@@ -337,203 +306,120 @@ PanelWindow {
         return states.join(" · ")
     }
 
-    onVisibleChanged: {
-        if (visible) {
-            refreshTimer.start()
-            requestRefresh()
-        } else {
-            refreshTimer.stop()
-            pendingInfo = []
-            pendingRemoval = ""
-            if (scanProc.running) {
-                scanProc.stopRequested = true
-                scanProc.running = false
-            }
+    function deviceIcon(device): string {
+        const icon = device.icon || ""
+        if (icon.startsWith("audio-head"))
+            return "headphones"
+        if (icon.startsWith("audio"))
+            return "speaker"
+        if (icon === "input-keyboard")
+            return "keyboard"
+        if (icon === "input-mouse" || icon === "input-tablet")
+            return "mouse"
+        if (icon === "input-gaming")
+            return "gamepad-2"
+        if (icon === "phone")
+            return "smartphone"
+        if (icon === "computer")
+            return "laptop"
+        if (icon.startsWith("video"))
+            return "tv"
+        return "bluetooth"
+    }
+
+    onOpening: {
+        operationStatus = ""
+        refreshTimer.start()
+        requestRefresh()
+    }
+
+    onShownChanged: {
+        if (shown)
+            return
+        refreshTimer.stop()
+        pendingInfo = []
+        pendingRemoval = ""
+        if (scanProc.running) {
+            scanProc.stopRequested = true
+            scanProc.running = false
         }
     }
 
-    component BluetoothDeviceRow: Rectangle {
+    // Device row: ListItem styling with a third mono line for the address and
+    // connect / trust / remove actions on the right.
+    component DeviceRow: ListItem {
         id: deviceRow
 
         required property var device
+        readonly property bool confirming: root.pendingRemoval === device.address
 
-        height: 66
-        radius: Theme.radiusMedium
-        color: device.connected ? Theme.selection : rowHover.containsMouse ? Theme.backgroundDark : "transparent"
-        border.color: device.connected ? Theme.accent : "transparent"
-        border.width: Theme.borderWidth
+        width: parent ? parent.width : 0
+        interactive: false
+        hoverHighlight: true
+        selected: device.connected
+        icon: root.deviceIcon(device)
+        title: device.alias || device.name || device.address
+        subtitle: root.deviceDetails(device)
+        subtitleTone: device.connected ? "success" : "faint"
+        detail: device.address
 
-        Rectangle {
-            anchors {
-                left: parent.left
-                verticalCenter: parent.verticalCenter
-                leftMargin: 12
-            }
-            width: 9
-            height: 9
-            radius: 5
-            color: deviceRow.device.connected ? Theme.success : deviceRow.device.paired ? Theme.warning : Theme.muted
+        Button {
+            anchors.verticalCenter: parent.verticalCenter
+            compact: true
+            text: deviceRow.device.connected ? "Disconnect" : "Connect"
+            icon: deviceRow.device.connected ? "unlink" : "link"
+            enabled: !root.actionRunning && root.powered && !deviceRow.device.blocked
+            onClicked: root.connectDevice(deviceRow.device)
         }
 
-        Column {
-            anchors {
-                left: parent.left
-                right: actions.left
-                verticalCenter: parent.verticalCenter
-                leftMargin: 32
-                rightMargin: 12
-            }
-            spacing: 3
-
-            Text {
-                width: parent.width
-                text: deviceRow.device.alias || deviceRow.device.name || deviceRow.device.address
-                color: Theme.foreground
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontBody
-                font.weight: deviceRow.device.connected ? Font.DemiBold : Font.Normal
-                elide: Text.ElideRight
-            }
-
-            Text {
-                width: parent.width
-                text: panel.deviceDetails(deviceRow.device)
-                color: deviceRow.device.connected ? Theme.success : Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                elide: Text.ElideRight
-            }
-
-            Text {
-                width: parent.width
-                text: deviceRow.device.address
-                color: Theme.muted
-                opacity: 0.7
-                font.family: Theme.fontMono
-                font.pixelSize: Math.max(9, Theme.fontCaption - 1)
-                elide: Text.ElideRight
-            }
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: 28
+            implicitHeight: 26
+            iconSize: 14
+            icon: deviceRow.device.trusted ? "shield-check" : "shield"
+            tone: deviceRow.device.trusted ? "success" : "faint"
+            enabled: !root.actionRunning && deviceRow.device.detailsLoaded
+            onClicked: root.toggleTrust(deviceRow.device)
         }
 
-        Row {
-            id: actions
-            anchors {
-                right: parent.right
-                verticalCenter: parent.verticalCenter
-                rightMargin: 8
-            }
-            spacing: 6
-
-            Rectangle {
-                width: connectLabel.implicitWidth + 20
-                height: 30
-                radius: Theme.radiusSmall
-                color: connectArea.containsMouse ? Theme.selection : Theme.backgroundDarker
-
-                Text {
-                    id: connectLabel
-                    anchors.centerIn: parent
-                    text: deviceRow.device.connected ? "Disconnect" : "Connect"
-                    color: deviceRow.device.connected ? Theme.warning : Theme.accent
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                }
-
-                MouseArea {
-                    id: connectArea
-                    anchors.fill: parent
-                    enabled: !panel.actionRunning && panel.powered && !deviceRow.device.blocked
-                    hoverEnabled: true
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: panel.connectDevice(deviceRow.device)
-                }
-            }
-
-            Rectangle {
-                width: trustLabel.implicitWidth + 20
-                height: 30
-                radius: Theme.radiusSmall
-                color: trustArea.containsMouse ? Theme.selection : Theme.backgroundDarker
-
-                Text {
-                    id: trustLabel
-                    anchors.centerIn: parent
-                    text: deviceRow.device.trusted ? "Untrust" : "Trust"
-                    color: deviceRow.device.trusted ? Theme.warning : Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                }
-
-                MouseArea {
-                    id: trustArea
-                    anchors.fill: parent
-                    enabled: !panel.actionRunning && deviceRow.device.detailsLoaded
-                    hoverEnabled: true
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: panel.toggleTrust(deviceRow.device)
-                }
-            }
-
-            Rectangle {
-                width: removeLabel.implicitWidth + 20
-                height: 30
-                radius: Theme.radiusSmall
-                color: removeArea.containsMouse ? Theme.selection : Theme.backgroundDarker
-
-                Text {
-                    id: removeLabel
-                    anchors.centerIn: parent
-                    text: panel.pendingRemoval === deviceRow.device.address ? "Confirm remove" : "Remove"
-                    color: panel.pendingRemoval === deviceRow.device.address ? Theme.error : Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                }
-
-                MouseArea {
-                    id: removeArea
-                    anchors.fill: parent
-                    enabled: !panel.actionRunning
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: panel.removeDevice(deviceRow.device)
-                }
-            }
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: !deviceRow.confirming
+            implicitWidth: 28
+            implicitHeight: 26
+            iconSize: 14
+            icon: "trash-2"
+            tone: "faint"
+            enabled: !root.actionRunning
+            onClicked: root.removeDevice(deviceRow.device)
         }
 
-        MouseArea {
-            id: rowHover
-            anchors.fill: parent
-            acceptedButtons: Qt.NoButton
-            hoverEnabled: true
-        }
-    }
-
-    IpcHandler {
-        target: "bluetooth"
-
-        function toggle(): void {
-            panel.toggle()
-        }
-
-        function close(): void {
-            panel.close()
+        Button {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: deviceRow.confirming
+            compact: true
+            variant: "danger"
+            text: "Confirm remove"
+            enabled: !root.actionRunning
+            onClicked: root.removeDevice(deviceRow.device)
         }
     }
 
     Timer {
         id: refreshTimer
-        interval: panel.scanning ? 5000 : 15000
+        interval: root.scanning ? 5000 : 15000
         repeat: true
         running: false
         triggeredOnStart: false
-        onTriggered: panel.requestRefresh()
+        onTriggered: root.requestRefresh()
     }
 
     Timer {
         id: refreshDelay
         interval: 650
         repeat: false
-        onTriggered: panel.requestRefresh()
+        onTriggered: root.requestRefresh()
     }
 
     Timer {
@@ -541,9 +427,9 @@ PanelWindow {
         interval: 8000
         repeat: false
         onTriggered: {
-            panel.pendingRemoval = ""
-            if (panel.operationStatus.startsWith("Click Confirm remove"))
-                panel.operationStatus = "Removal cancelled"
+            root.pendingRemoval = ""
+            if (root.operationStatus.startsWith("Click Confirm remove"))
+                root.operationStatus = "Removal cancelled"
         }
     }
 
@@ -557,7 +443,7 @@ PanelWindow {
         stdout: SplitParser {
             splitMarker: "\n"
             onRead: data => {
-                if (panel.visible && data.startsWith("[NEW] Device") && !refreshDelay.running)
+                if (root.shown && data.startsWith("[NEW] Device") && !refreshDelay.running)
                     refreshDelay.restart()
             }
         }
@@ -566,16 +452,16 @@ PanelWindow {
         }
         onStarted: {
             failureText = ""
-            if (panel.visible)
+            if (root.shown)
                 refreshDelay.restart()
         }
         onExited: (exitCode, exitStatus) => {
-            if (panel.visible && !stopRequested) {
-                panel.operationStatus = exitCode === 0
+            if (root.shown && !stopRequested) {
+                root.operationStatus = exitCode === 0
                     ? "Scan finished"
                     : `Scan failed${failureText.length > 0 ? ` — ${failureText.split("\n")[0]}` : ""}`
             }
-            if (panel.visible)
+            if (root.shown)
                 refreshDelay.restart()
         }
     }
@@ -587,25 +473,25 @@ PanelWindow {
 
         command: ["bluetoothctl", "show"]
         stdout: StdioCollector {
-            onStreamFinished: panel.parseAdapter(text)
+            onStreamFinished: root.parseAdapter(text)
         }
         stderr: StdioCollector {}
         onStarted: adapterSeen = false
         onExited: (exitCode, exitStatus) => {
-            panel.hasAdapter = adapterSeen
+            root.hasAdapter = adapterSeen
             if (!adapterSeen) {
-                panel.adapterAddress = ""
-                panel.adapterName = ""
-                panel.powered = false
-                panel.discovering = false
-                panel.pairable = false
-                panel.devices = []
-                panel.pendingInfo = []
-                if (panel.visible && panel.operationStatus.length === 0)
-                    panel.operationStatus = "No Bluetooth adapter detected"
+                root.adapterAddress = ""
+                root.adapterName = ""
+                root.powered = false
+                root.discovering = false
+                root.pairable = false
+                root.devices = []
+                root.pendingInfo = []
+                if (root.shown && root.operationStatus.length === 0)
+                    root.operationStatus = "No Bluetooth adapter detected"
                 return
             }
-            if (panel.visible && !deviceProc.running)
+            if (root.shown && !deviceProc.running)
                 deviceProc.running = true
         }
     }
@@ -619,15 +505,15 @@ PanelWindow {
         stdout: StdioCollector {
             onStreamFinished: {
                 deviceProc.receivedOutput = true
-                panel.beginDeviceInfo(panel.parseDevices(text))
+                root.beginDeviceInfo(root.parseDevices(text))
             }
         }
         stderr: StdioCollector {}
         onStarted: receivedOutput = false
         onExited: (exitCode, exitStatus) => {
             if (!receivedOutput) {
-                panel.devices = []
-                panel.pendingInfo = []
+                root.devices = []
+                root.pendingInfo = []
             }
         }
     }
@@ -644,10 +530,10 @@ PanelWindow {
         stderr: StdioCollector {}
         onStarted: collectedOutput = ""
         onExited: (exitCode, exitStatus) => {
-            if (exitCode === 0 && panel.validAddress(currentAddress))
-                panel.applyDeviceInfo(currentAddress, collectedOutput)
+            if (exitCode === 0 && root.validAddress(currentAddress))
+                root.applyDeviceInfo(currentAddress, collectedOutput)
             currentAddress = ""
-            panel.startNextDeviceInfo()
+            root.startNextDeviceInfo()
         }
     }
 
@@ -662,362 +548,153 @@ PanelWindow {
         }
         onStarted: {
             failureText = ""
-            panel.actionRunning = true
+            root.actionRunning = true
         }
         onExited: (exitCode, exitStatus) => {
-            panel.actionRunning = false
-            panel.operationStatus = exitCode === 0
-                ? `${panel.actionDescription} succeeded`
-                : `${panel.actionDescription} failed${failureText.length > 0 ? ` — ${failureText.split("\n")[0]}` : ""}`
-            if (panel.visible)
+            root.actionRunning = false
+            root.operationStatus = exitCode === 0
+                ? `${root.actionDescription} succeeded`
+                : `${root.actionDescription} failed${failureText.length > 0 ? ` — ${failureText.split("\n")[0]}` : ""}`
+            if (root.shown)
                 refreshDelay.restart()
         }
     }
 
-    Shortcut {
-        sequence: "Escape"
-        enabled: panel.visible
-        onActivated: panel.close()
-    }
 
-    MouseArea {
-        anchors.fill: parent
-        onClicked: panel.close()
-    }
-
-    PanelCard {
-        id: card
-        anchors {
-            top: parent.top
-            right: parent.right
-            topMargin: Theme.outerMargin + Theme.barHeight + Theme.shellGap
-            rightMargin: Theme.outerMargin
-        }
-        width: Math.min(780, panel.width - 80)
-        height: Math.min(780, panel.height - 100)
-
-        MouseArea {
-            anchors.fill: parent
-        }
-
-        Item {
-            id: header
-            anchors {
-                top: parent.top
-                left: parent.left
-                right: parent.right
-                margins: 20
-            }
-            height: 58
-
-            Column {
-                anchors {
-                    left: parent.left
-                    right: headerControls.left
-                    verticalCenter: parent.verticalCenter
-                    rightMargin: 18
-                }
-                spacing: 3
-
-                Text {
-                    width: parent.width
-                    text: "Bluetooth"
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontTitle
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    width: parent.width
-                    text: panel.adapterSummary
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                    elide: Text.ElideRight
-                }
-            }
-
-            Row {
-                id: headerControls
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 8
-
-                Rectangle {
-                    width: powerLabel.implicitWidth + 24
-                    height: 34
-                    radius: Theme.radiusMedium
-                    color: powerArea.containsMouse ? Theme.selection : Theme.backgroundDark
-                    opacity: panel.hasAdapter ? 1 : 0.55
-
-                    Text {
-                        id: powerLabel
-                        anchors.centerIn: parent
-                        text: panel.hasAdapter ? (panel.powered ? "Bluetooth on" : "Bluetooth off") : "No adapter"
-                        color: panel.powered && panel.hasAdapter ? Theme.success : Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    MouseArea {
-                        id: powerArea
-                        anchors.fill: parent
-                        enabled: panel.hasAdapter && !panel.actionRunning
-                        hoverEnabled: true
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: panel.togglePower()
-                    }
-                }
-
-                Rectangle {
-                    width: scanLabel.implicitWidth + 24
-                    height: 34
-                    radius: Theme.radiusMedium
-                    color: scanArea.containsMouse ? Theme.selection : Theme.backgroundDark
-                    opacity: panel.hasAdapter && panel.powered ? 1 : 0.55
-
-                    Text {
-                        id: scanLabel
-                        anchors.centerIn: parent
-                        text: panel.scanning ? "Stop scan" : "Start scan"
-                        color: panel.scanning ? Theme.warning : Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    MouseArea {
-                        id: scanArea
-                        anchors.fill: parent
-                        enabled: panel.hasAdapter && panel.powered && !panel.actionRunning
-                        hoverEnabled: true
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: panel.toggleScan()
-                    }
-                }
-
-                Rectangle {
-                    width: 76
-                    height: 34
-                    radius: Theme.radiusMedium
-                    color: refreshArea.containsMouse ? Theme.selection : Theme.backgroundDark
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: panel.refreshing ? "Checking" : "Refresh"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    MouseArea {
-                        id: refreshArea
-                        anchors.fill: parent
-                        enabled: !panel.refreshing && !panel.actionRunning
-                        hoverEnabled: true
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: {
-                            panel.operationStatus = "Refreshing Bluetooth state…"
-                            panel.requestRefresh()
-                        }
-                    }
-                }
+    headerTrailing: [
+        Toggle {
+            anchors.verticalCenter: parent.verticalCenter
+            enabled: root.hasAdapter && !root.actionRunning
+            checked: root.hasAdapter && root.powered
+            onToggled: root.togglePower()
+        },
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "radar"
+            label: root.scanning ? "stop" : "scan"
+            active: root.scanning
+            enabled: root.hasAdapter && root.powered && !root.actionRunning
+            onClicked: root.toggleScan()
+        },
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "refresh-cw"
+            label: root.refreshing ? "checking" : ""
+            enabled: !root.refreshing && !root.actionRunning
+            onClicked: {
+                root.operationStatus = "Refreshing Bluetooth state…"
+                root.requestRefresh()
             }
         }
+    ]
+
+    footer: [
+        Label {
+            width: parent.width - footerHint.width - parent.spacing
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.operationStatus.length > 0 ? root.operationStatus : "Device addresses are passed directly to bluetoothctl"
+            variant: "small"
+            tone: root.operationStatus.includes("failed") || root.operationStatus.includes("Confirm") ? "warning" : "faint"
+        },
+        Label {
+            id: footerHint
+
+            anchors.verticalCenter: parent.verticalCenter
+            text: "esc close"
+            variant: "numeric"
+            font.pixelSize: Theme.fontSize.caption
+            font.weight: Font.Normal
+            tone: "disabled"
+        }
+    ]
+
+    ListItem {
+        width: parent.width
+        interactive: false
+        icon: root.hasAdapter && root.powered ? "bluetooth" : "bluetooth-off"
+        title: root.hasAdapter ? (root.adapterName || "Bluetooth controller") : "No adapter detected"
+        subtitle: root.hasAdapter
+            ? `${root.adapterAddress}${root.pairable ? " · Pairable" : ""}${root.discovering ? " · Discovering devices" : ""}`
+            : "Bluetooth controls will appear when an adapter is available"
+        trailing: !root.hasAdapter ? "none" : root.powered ? "on" : "off"
+        trailingTone: !root.hasAdapter ? "faint" : root.powered ? "success" : "warning"
 
         Rectangle {
-            id: adapterCard
-            anchors {
-                top: header.bottom
-                left: parent.left
-                right: parent.right
-                topMargin: 8
-                leftMargin: 20
-                rightMargin: 20
-            }
-            height: 58
-            radius: Theme.radiusMedium
-            color: Theme.backgroundDark
-            border.color: !panel.hasAdapter ? Theme.border : panel.powered ? Theme.success : Theme.warning
-            border.width: Theme.borderWidth
+            anchors.verticalCenter: parent.verticalCenter
+            width: 7
+            height: 7
+            radius: 3.5
+            color: !root.hasAdapter ? Theme.text.disabled : root.powered ? Theme.success : Theme.warning
+        }
+    }
 
-            Rectangle {
-                anchors {
-                    left: parent.left
-                    verticalCenter: parent.verticalCenter
-                    leftMargin: 14
-                }
-                width: 10
-                height: 10
-                radius: 5
-                color: !panel.hasAdapter ? Theme.muted : panel.powered ? Theme.success : Theme.warning
-            }
+    SectionHeader {
+        width: parent.width
+        text: "Paired devices"
+        trailing: String(root.pairedDevices.length)
+    }
 
-            Column {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    verticalCenter: parent.verticalCenter
-                    leftMargin: 36
-                    rightMargin: 14
-                }
-                spacing: 2
+    Column {
+        width: parent.width
+        spacing: 2
 
-                Text {
-                    width: parent.width
-                    text: panel.hasAdapter ? (panel.adapterName || "Bluetooth controller") : "No adapter detected"
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    width: parent.width
-                    text: panel.hasAdapter
-                        ? `${panel.adapterAddress}${panel.pairable ? " · Pairable" : ""}${panel.discovering ? " · Discovering devices" : ""}`
-                        : "Bluetooth controls will appear when an adapter is available"
-                    color: Theme.muted
-                    font.family: panel.hasAdapter ? Theme.fontMono : Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                    elide: Text.ElideRight
-                }
-            }
+        Label {
+            visible: root.pairedDevices.length === 0
+            width: parent.width
+            topPadding: Theme.space.xs
+            text: root.hasAdapter && root.powered ? "No paired devices" : root.hasAdapter ? "Bluetooth is powered off" : "No Bluetooth adapter available"
+            variant: "small"
+            tone: "faint"
         }
 
-        Flickable {
-            id: deviceFlick
-            anchors {
-                top: adapterCard.bottom
-                left: parent.left
-                right: parent.right
-                bottom: footer.top
-                topMargin: 14
-                leftMargin: 20
-                rightMargin: 20
-                bottomMargin: 8
+        Repeater {
+            model: ScriptModel {
+                values: root.pairedDevices
             }
-            contentWidth: width
-            contentHeight: deviceColumn.height
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
 
-            Column {
-                id: deviceColumn
-                width: deviceFlick.width
-                spacing: 5
+            delegate: DeviceRow {
+                required property var modelData
 
-                Text {
-                    width: parent.width
-                    leftPadding: 2
-                    text: `PAIRED DEVICES  ${panel.pairedDevices.length}`
-                    color: Theme.accent
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                    font.weight: Font.DemiBold
-                }
-
-                Text {
-                    visible: panel.pairedDevices.length === 0
-                    width: parent.width
-                    height: visible ? 50 : 0
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignHCenter
-                    text: panel.hasAdapter && panel.powered ? "No paired devices" : panel.hasAdapter ? "Bluetooth is powered off" : "No Bluetooth adapter available"
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                }
-
-                Repeater {
-                    model: ScriptModel { values: panel.pairedDevices }
-                    delegate: BluetoothDeviceRow {
-                        required property var modelData
-                        width: deviceColumn.width
-                        device: modelData
-                    }
-                }
-
-                Item { width: 1; height: 8 }
-
-                Text {
-                    width: parent.width
-                    leftPadding: 2
-                    text: `DISCOVERED DEVICES  ${panel.discoveredDevices.length}`
-                    color: Theme.accent
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                    font.weight: Font.DemiBold
-                }
-
-                Text {
-                    visible: panel.discoveredDevices.length === 0
-                    width: parent.width
-                    height: visible ? 56 : 0
-                    verticalAlignment: Text.AlignVCenter
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                    text: !panel.hasAdapter
-                        ? "Attach a Bluetooth adapter to discover devices"
-                        : !panel.powered
-                            ? "Turn Bluetooth on to discover devices"
-                            : panel.discovering
-                                ? "Scanning for nearby devices…"
-                                : "No nearby devices cached · start a scan to discover"
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                }
-
-                Repeater {
-                    model: ScriptModel { values: panel.discoveredDevices }
-                    delegate: BluetoothDeviceRow {
-                        required property var modelData
-                        width: deviceColumn.width
-                        device: modelData
-                    }
-                }
+                device: modelData
             }
         }
+    }
 
-        Item {
-            id: footer
-            anchors {
-                left: parent.left
-                right: parent.right
-                bottom: parent.bottom
-                leftMargin: 20
-                rightMargin: 20
+    SectionHeader {
+        width: parent.width
+        text: "Discovered devices"
+        trailing: String(root.discoveredDevices.length)
+    }
+
+    Column {
+        width: parent.width
+        spacing: 2
+
+        Label {
+            visible: root.discoveredDevices.length === 0
+            width: parent.width
+            topPadding: Theme.space.xs
+            wrapMode: Text.WordWrap
+            text: !root.hasAdapter
+                ? "Attach a Bluetooth adapter to discover devices"
+                : !root.powered
+                    ? "Turn Bluetooth on to discover devices"
+                    : root.discovering
+                        ? "Scanning for nearby devices…"
+                        : "No nearby devices cached · start a scan to discover"
+            variant: "small"
+            tone: "faint"
+        }
+
+        Repeater {
+            model: ScriptModel {
+                values: root.discoveredDevices
             }
-            height: 42
 
-            Text {
-                anchors {
-                    left: parent.left
-                    right: footerHint.left
-                    verticalCenter: parent.verticalCenter
-                    rightMargin: 16
-                }
-                text: panel.operationStatus.length > 0 ? panel.operationStatus : "Device addresses are passed directly to bluetoothctl"
-                color: panel.operationStatus.includes("failed") || panel.operationStatus.includes("Confirm") ? Theme.warning : Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                elide: Text.ElideRight
-            }
+            delegate: DeviceRow {
+                required property var modelData
 
-            Text {
-                id: footerHint
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: "esc close"
-                color: Theme.muted
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontCaption
+                device: modelData
             }
         }
     }

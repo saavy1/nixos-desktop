@@ -9,6 +9,14 @@ ShellRoot {
         id: mediaStatus
     }
 
+    AgentUsage {
+        id: agentUsage
+    }
+
+    LabState {
+        id: labState
+    }
+
     Osd {
         id: osd
     }
@@ -16,7 +24,6 @@ ShellRoot {
         id: captureState
         osd: osd
     }
-
 
     Wallpaper {}
     NotificationPopup {
@@ -26,14 +33,22 @@ ShellRoot {
         notificationState: notificationState
         mediaStatus: mediaStatus
         captureState: captureState
+        agentUsage: agentUsage
+        labState: labState
     }
     Launcher {}
     Keybinds {}
+    AgentsPanel {
+        usage: agentUsage
+    }
     AudioPanel {}
     BluetoothPanel {}
     CalendarPanel {}
     CapturePanel {
         state: captureState
+    }
+    LabPanel {
+        lab: labState
     }
     DisplayPanel {
         osd: osd
@@ -47,4 +62,5 @@ ShellRoot {
     }
     SystemPanel {}
     WallpaperPicker {}
+    ClipboardPanel {}
 }
