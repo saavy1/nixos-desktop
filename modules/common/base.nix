@@ -21,7 +21,6 @@
       "steam-unwrapped"
       "chatgpt-app"
       "droid"
-      "claude-code"
       "claude-desktop"
       "moshi-hook"
       "polylane"

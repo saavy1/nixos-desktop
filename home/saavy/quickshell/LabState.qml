@@ -30,6 +30,10 @@ Item {
     property var kustomizations: []
     property string clusterError: ""
 
+    // Journal warnings the journal-triage service rated above noise:
+    // [{ key, unit, verdict, summary, sample, count, last_seen, dismissed }].
+    property var journalItems: []
+
     // Spark model server
     property bool sparkOnline: false
     property string sparkError: ""
@@ -49,18 +53,24 @@ Item {
     readonly property var notReadyNodes: nodes.filter(node => !node.ready)
     readonly property var unsyncedApps: apps.filter(app => app.sync !== "Synced" || app.health !== "Healthy")
     readonly property var failingKustomizations: kustomizations.filter(item => !item.ready)
+    readonly property var journalProblems: journalItems.filter(item => !item.dismissed
+        && (item.verdict === "problem" || item.verdict === "critical"))
     // "danger" | "warning" | "ok" | "unknown"
     readonly property string status: {
-        if (degradedPools.length > 0 || notReadyNodes.length > 0)
+        if (degradedPools.length > 0 || notReadyNodes.length > 0 || journalProblems.some(item => item.verdict === "critical"))
             return "danger"
-        if (podProblems.length > 0 || unsyncedApps.length > 0 || failingKustomizations.length > 0)
+        if (podProblems.length > 0 || unsyncedApps.length > 0 || failingKustomizations.length > 0 || journalProblems.length > 0)
             return "warning"
         if (pools.length === 0 && nodes.length === 0)
             return "unknown"
         return "ok"
     }
     readonly property int issueCount: degradedPools.length + notReadyNodes.length + podProblems.length
-        + unsyncedApps.length + failingKustomizations.length
+        + unsyncedApps.length + failingKustomizations.length + journalProblems.length
+
+    function dismissJournalItem(key): void {
+        Quickshell.execDetached(["journal-triage", "dismiss", key])
+    }
 
     function refresh(): void {
         for (const process of [zfsProc, nodesProc, podsProc, appsProc, fluxProc, sparkHostProc]) {
@@ -263,6 +273,19 @@ Item {
             return { name, image, state, running: state.startsWith("Up") }
         })
         sparkHostError = ""
+    }
+
+    FileView {
+        path: `${Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"}/journal-triage.json`
+        preload: true
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            try {
+                lab.journalItems = JSON.parse(text()).items || []
+            } catch (error) {}
+        }
     }
 
     Process {

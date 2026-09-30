@@ -108,6 +108,12 @@ let
     flakeIgnore = [ "E501" ];
   } (builtins.readFile ./scripts/workspace-namer.py);
 
+  # Follows journal warnings, groups them into templates and has Qwen rate new
+  # ones; the Lab panel shows the non-noise items from journal-triage.json.
+  journalTriage = pkgs.writers.writePython3Bin "journal-triage" {
+    flakeIgnore = [ "E501" ];
+  } (builtins.readFile ./scripts/journal-triage.py);
+
   appCategoriesJson = pkgs.writeText "app-categories.json" (
     builtins.toJSON { categories = appCategories; }
   );
@@ -117,6 +123,7 @@ in
     agentUsageToday
     appCategorize
     clipGuard
+    journalTriage
     workspaceNamer
     clipboardSelect
     clipboardDelete
@@ -207,6 +214,17 @@ in
       RestartSec = 5;
     };
     Install.WantedBy = [ "graphical-session.target" ];
+  };
+
+  systemd.user.services.journal-triage = {
+    Unit.Description = "Triage journal warnings with a local model";
+    Service = {
+      Environment = "PATH=${lib.makeBinPath [ pkgs.systemd ]}";
+      ExecStart = "${journalTriage}/bin/journal-triage";
+      Restart = "always";
+      RestartSec = 10;
+    };
+    Install.WantedBy = [ "default.target" ];
   };
 
   systemd.user.services.quickshell = {

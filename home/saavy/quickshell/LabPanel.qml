@@ -297,6 +297,97 @@ PopupPanel {
         }
     }
 
+    // ---- System log ------------------------------------------------------
+
+    SectionHeader {
+        width: parent.width
+        text: "System log"
+        trailing: root.lab.journalProblems.length > 0 ? `${root.lab.journalProblems.length} to fix` : "journal"
+        trailingTone: root.lab.journalProblems.length > 0 ? "warning" : "faint"
+    }
+
+    Column {
+        readonly property var visibleItems: root.lab.journalItems.filter(item => !item.dismissed).slice(0, 8)
+
+        width: parent.width
+        spacing: Theme.space.xs
+
+        Repeater {
+            model: parent.visibleItems
+
+            delegate: Item {
+                required property var modelData
+                readonly property string tone: modelData.verdict === "critical" ? "danger"
+                    : modelData.verdict === "problem" ? "warning" : "faint"
+
+                width: parent ? parent.width : 0
+                height: journalText.implicitHeight + Theme.space.sm * 2
+
+                Rectangle {
+                    x: 0
+                    y: Theme.space.sm + 6
+                    width: 6
+                    height: 6
+                    radius: 3
+                    color: Theme.tone(parent.tone)
+                }
+
+                Column {
+                    id: journalText
+
+                    anchors {
+                        left: parent.left
+                        right: dismiss.left
+                        leftMargin: Theme.space.md + 6
+                        rightMargin: Theme.space.sm
+                        verticalCenter: parent.verticalCenter
+                    }
+                    spacing: 2
+
+                    Label {
+                        width: parent.width
+                        text: modelData.summary
+                        variant: "small"
+                        font.pixelSize: Theme.fontSize.bar
+                        tone: modelData.verdict === "minor" ? "soft" : "base"
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                    }
+
+                    Label {
+                        width: parent.width
+                        text: `${modelData.unit} · ×${modelData.count} today · ${modelData.verdict}`
+                        variant: "numeric"
+                        font.pixelSize: Theme.fontSize.caption
+                        font.weight: Font.Normal
+                        tone: "faint"
+                    }
+                }
+
+                IconButton {
+                    id: dismiss
+
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: 26
+                    implicitHeight: 24
+                    iconSize: 13
+                    icon: "x"
+                    tone: "faint"
+                    onClicked: root.lab.dismissJournalItem(modelData.key)
+                }
+            }
+        }
+
+        Label {
+            visible: parent.visibleItems.length === 0
+            width: parent.width
+            text: root.lab.journalItems.length > 0 ? "Everything in the journal is dismissed or noise" : "Nothing worth your attention in the journal"
+            variant: "small"
+            tone: "faint"
+        }
+    }
+
     // ---- Spark -----------------------------------------------------------
 
     SectionHeader {

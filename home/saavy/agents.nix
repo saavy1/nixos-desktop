@@ -47,7 +47,6 @@ in
     herdrPackage
     codex
     pkgs.pi-coding-agent
-    pkgs.claude-code
     droid
     polylane
     agentOrchestratorPackage

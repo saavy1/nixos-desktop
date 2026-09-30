@@ -26,6 +26,13 @@
     # KiCad 10 MCP server; keep upstream's tested Rust/nixpkgs toolchain.
     konnect.url = "github:mixelpixx/Konnect/v0.12.0";
 
+    # Rust toolchains for local projects such as ~/dev/miata, independent of
+    # Konnect's pin. `nix flake update rust-overlay` advances to newer stable.
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     herdr = {
       url = "github:herdrdev/herdr/v0.9.0";
       inputs.nixpkgs.follows = "nixpkgs";
