@@ -44,14 +44,22 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Zed Delta closed-beta tarball, downloaded manually to
-    # ~/Downloads/delta-linux-x86_64.tar.gz. A new download is re-pinned with
-    # `nix flake update delta-tarball` (narHash in flake.lock enforces the
-    # exact bytes); bump `version` in packages/delta/source-pin.nix alongside.
-    delta-tarball = {
-      url = "path:/home/saavy/Downloads/delta-linux-x86_64.tar.gz";
-      flake = false;
-    };
+    # Zed Delta, packaged upstream by the official delta-nix flake: fetchurl
+    # against the hash-pinned stable release, patchelf wrapping, and desktop
+    # entries routed through the CLI. No `follows`: upstream builds against
+    # its own nixpkgs pin (wrapper/runtime libs) validated by its CI lock.
+    # Advance the release with `nix flake update delta`; pin a tag
+    # (`github:zed-industries/delta-nix/v0.18.0`) to hold an exact version.
+    delta.url = "github:zed-industries/delta-nix";
+
+    # Zed editor from the official in-repo flake. It builds from source with
+    # upstream's own crane/rust toolchain and nixpkgs pins (insulated from
+    # ours), and zed.cachix.org substitutes whatever it holds — see the
+    # substituter entry in modules/common/base.nix. Pinned to a release tag
+    # on purpose: this flake has no binary channel, so a moving ref would
+    # recompile the Rust workspace on every `nix flake update`. Bump the
+    # tag deliberately; the cost is one long local build per release.
+    zed.url = "github:zed-industries/zed/v1.22.0";
   };
 
   outputs =
@@ -76,11 +84,6 @@
           inherit inputs;
         });
       };
-      packages.x86_64-linux.codex =
-        nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/codex { };
-      packages.x86_64-linux.omp =
-        nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/omp { };
-
       packages.x86_64-linux.claude-desktop =
         nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/claude-desktop { };
 

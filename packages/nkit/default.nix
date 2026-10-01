@@ -27,16 +27,16 @@
   vulkan-loader,
 }:
 let
-  version = "2.1.0";
+  version = "3.0.1";
 
   cliSrc = fetchurl {
-    url = "https://github.com/Nanook/NKit/releases/download/v${version}/NKit_CLI_linux-x64_${version}.zip";
-    hash = "sha256-+wNXBNkAVqMo682p7WA/zjLfzbMElQgC8kghz+0WiLw=";
+    url = "https://github.com/Nanook/NKit/releases/download/v${version}/NKit_linux-x64_CLI_${version}.zip";
+    hash = "sha256-qsq2zClOpPW0VE99//pdu9eP5vxnXViRWsQrM4+X19A=";
   };
 
   uiSrc = fetchurl {
-    url = "https://github.com/Nanook/NKit/releases/download/v${version}/NKit_UI_linux-x64_${version}.zip";
-    hash = "sha256-VAkSn9bzWjqgsDoia5VVuGTCBwvbcHi0m2JeJB0ldAw=";
+    url = "https://github.com/Nanook/NKit/releases/download/v${version}/NKit_linux-x64_UI_${version}.zip";
+    hash = "sha256-Df+NnQnguWtQr3h1ZQYwYNL2UO8tNdvCz9pB2zvG0+E=";
   };
 
   runtimeLibraries = [
@@ -96,7 +96,7 @@ stdenv.mkDerivation {
     done
     for program in nkit-ui nkds-ui; do
       makeWrapper "$out/libexec/nkit/ui/$program" "$out/bin/$program" \
-        --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath runtimeLibraries}"
+        --prefix LD_LIBRARY_PATH : "$out/libexec/nkit/ui:${lib.makeLibraryPath runtimeLibraries}"
     done
 
     runHook postInstall

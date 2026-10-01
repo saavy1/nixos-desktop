@@ -2,8 +2,8 @@
 let
   herdrPackage = inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
   cuaDriverPackage = inputs.cua.packages.${pkgs.stdenv.hostPlatform.system}.cua-driver;
-  codex = pkgs.callPackage ../../packages/codex { };
-  omp = pkgs.callPackage ../../packages/omp { };
+  codex = pkgs.codex;
+  omp = pkgs.omp;
   droid = pkgs.callPackage ../../packages/droid { };
   polylane = pkgs.callPackage ../../packages/polylane { };
   agentOrchestratorPackage = pkgs.callPackage ../../packages/agent-orchestrator { };
@@ -82,10 +82,10 @@ in
     ];
   };
 
-  # The upstream module manages Home Manager integration, while the package is
-  # pinned directly from OMP's official release in packages/omp. OMP itself
-  # owns ~/.omp/agent/config.yml; declaring programs.omp.settings would replace
-  # runtime changes on every switch and force re-onboarding.
+  # The upstream module manages Home Manager integration; the CLI itself is
+  # nixpkgs' omp (same upstream project, cached, advances with the lock).
+  # OMP itself owns ~/.omp/agent/config.yml; declaring programs.omp.settings
+  # would replace runtime changes on every switch and force re-onboarding.
   programs.omp = {
     enable = true;
     package = omp;

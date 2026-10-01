@@ -1,7 +1,6 @@
 { pkgs, ... }:
 let
   nkit = pkgs.callPackage ../../packages/nkit { };
-  proton-ge-10-34 = pkgs.callPackage ../../packages/proton-ge-10-34 { };
   slippi-launcher = pkgs.callPackage ../../packages/slippi-launcher { };
   ssbm-nucleus = pkgs.callPackage ../../packages/ssbm-nucleus { };
 in
@@ -16,7 +15,6 @@ in
     gamescopeSession.enable = true;
     extraCompatPackages = [
       pkgs.proton-ge-bin
-      proton-ge-10-34
     ];
   };
 
