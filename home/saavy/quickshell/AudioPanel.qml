@@ -1,20 +1,20 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Pipewire
-import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
-PanelWindow {
-    id: audioPanel
+PopupPanel {
+    id: root
 
     readonly property var output: Pipewire.defaultAudioSink
     readonly property var microphone: Pipewire.defaultAudioSource
     readonly property var outputDevices: Pipewire.nodes.values
         .filter(node => node.audio !== null && node.isSink && !node.isStream)
-        .sort((left, right) => audioPanel.nodeName(left).localeCompare(audioPanel.nodeName(right)))
+        .sort((left, right) => root.nodeName(left).localeCompare(root.nodeName(right)))
     readonly property var playbackStreams: Pipewire.nodes.values
         .filter(node => node.audio !== null && node.isStream && !node.isSink)
-        .sort((left, right) => audioPanel.streamName(left).localeCompare(audioPanel.streamName(right)))
+        .sort((left, right) => root.streamName(left).localeCompare(root.streamName(right)))
     property string macAvailability: "UNAVAILABLE"
     property int macRevision: 0
     property string macReceivedAt: ""
@@ -30,27 +30,11 @@ PanelWindow {
         .filter(route => route && route.is_local === false)
         .slice(0, 4)
     readonly property string macStatus: effectiveMacAvailability()
-    readonly property color macStatusTone: macStatus === "AVAILABLE"
-        ? Theme.success
-        : macStatus === "UNAVAILABLE" ? Theme.error : Theme.warning
 
-    visible: PopupController.isOpen("audio")
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    exclusiveZone: 0
-    focusable: visible
-    screen: PopupController.focusedScreen
-
-    anchors {
-        top: true
-        bottom: true
-        left: true
-        right: true
-    }
-
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-audio"
+    name: "audio"
+    title: "Sound"
+    subtitle: nodeAvailable(output) ? `${nodeName(output).toLowerCase()} · pipewire` : (Pipewire.ready ? "no output" : "connecting…")
+    cardWidth: 440
 
     function nodeAvailable(node): bool {
         return node !== null && node !== undefined && node.ready && node.audio !== null
@@ -247,51 +231,63 @@ PanelWindow {
         return `${label} / ${route.sink_index}`
     }
 
-    function open(): void {
-        PopupController.open("audio")
-        Qt.callLater(() => keyScope.forceActiveFocus())
+    function deviceKind(node): string {
+        const name = node && node.name ? node.name : ""
+        if (name.startsWith("bluez"))
+            return "BT"
+        if (name.indexOf("hdmi") >= 0 || name.indexOf("HDMI") >= 0)
+            return "HDMI"
+        if (name.indexOf("usb") >= 0)
+            return "USB"
+        return ""
     }
 
-    function close(): void {
-        PopupController.close("audio")
-    }
-
-    function toggle(): void {
-        if (visible)
-            close()
-        else
-            open()
-    }
-
-    IpcHandler {
-        target: "audio"
-
-        function toggle(): void {
-            audioPanel.toggle()
-        }
-
-        function close(): void {
-            audioPanel.close()
+    function deviceIcon(node): string {
+        switch (deviceKind(node)) {
+        case "BT":
+            return "headphones"
+        case "HDMI":
+            return "monitor"
+        default:
+            return "speaker"
         }
     }
 
-    PwObjectTracker {
-        objects: [audioPanel.output, audioPanel.microphone]
+    function setVolume(node, value: real): void {
+        if (!nodeAvailable(node))
+            return
+
+        node.audio.volume = value
+        if (value > 0 && node.audio.muted)
+            node.audio.muted = false
+    }
+
+    function toggleMute(node): void {
+        if (nodeAvailable(node))
+            node.audio.muted = !node.audio.muted
+    }
+
+    function percent(node): string {
+        return nodeAvailable(node) ? `${Math.round(node.audio.volume * 100)}%` : "—"
     }
 
     PwObjectTracker {
-        objects: audioPanel.outputDevices
+        objects: [root.output, root.microphone]
     }
 
     PwObjectTracker {
-        objects: audioPanel.playbackStreams
+        objects: root.outputDevices
+    }
+
+    PwObjectTracker {
+        objects: root.playbackStreams
     }
 
     Timer {
         interval: 1000
         running: true
         repeat: true
-        onTriggered: audioPanel.macClockTick = Date.now()
+        onTriggered: root.macClockTick = Date.now()
     }
 
     Timer {
@@ -308,13 +304,13 @@ PanelWindow {
     Process {
         id: audioWatchProcess
 
-        command: ["/home/saavy/.local/bin/audioctl", "watch", "--json", "--interval-ms", "5000"]
+        command: [Quickshell.env("HOME") + "/.local/bin/audioctl", "watch", "--json", "--interval-ms", "5000"]
         stdout: SplitParser {
             splitMarker: "\n"
-            onRead: data => audioPanel.acceptAudioEnvelope(data)
+            onRead: data => root.acceptAudioEnvelope(data)
         }
         onExited: (exitCode, exitStatus) => {
-            audioPanel.macWatchError = audioPanel.macHasEnvelope
+            root.macWatchError = root.macHasEnvelope
                 ? "Mac audio watcher stopped; showing the last known snapshot."
                 : "Mac audio watcher is unavailable; retrying in 5 seconds."
             audioWatchRestartTimer.restart()
@@ -323,667 +319,284 @@ PanelWindow {
 
     Component.onCompleted: audioWatchProcess.running = true
 
-    component VolumeSlider: Item {
-        id: slider
+
+    component LevelControl: Column {
+        id: control
 
         required property var node
-        readonly property bool available: audioPanel.nodeAvailable(node)
-        readonly property real level: available ? Math.max(0, Math.min(1, node.audio.volume)) : 0
-
-        implicitHeight: 24
-        opacity: available ? 1 : 0.45
-
-        function setFromPosition(position: real): void {
-            if (!available)
-                return
-
-            const nextVolume = Math.max(0, Math.min(1, position / width))
-            node.audio.volume = nextVolume
-            if (nextVolume > 0 && node.audio.muted)
-                node.audio.muted = false
-        }
-
-        Rectangle {
-            anchors {
-                left: parent.left
-                right: parent.right
-                verticalCenter: parent.verticalCenter
-            }
-            height: 6
-            radius: 3
-            color: Theme.backgroundDarker
-
-            Rectangle {
-                width: parent.width * slider.level
-                height: parent.height
-                radius: parent.radius
-                color: Theme.accent
-            }
-        }
-
-        Rectangle {
-            x: Math.max(0, Math.min(parent.width - width, parent.width * slider.level - width / 2))
-            anchors.verticalCenter: parent.verticalCenter
-            width: 16
-            height: 16
-            radius: 8
-            color: slider.available ? Theme.foreground : Theme.muted
-            border.color: Theme.backgroundDarker
-            border.width: Theme.borderWidth
-        }
-
-        MouseArea {
-            id: dragArea
-
-            anchors.fill: parent
-            enabled: slider.available
-            cursorShape: Qt.PointingHandCursor
-            onPressed: mouse => slider.setFromPosition(mouse.x)
-            onPositionChanged: mouse => {
-                if (pressed)
-                    slider.setFromPosition(mouse.x)
-            }
-        }
-    }
-
-    component VolumeRow: Rectangle {
-        id: volumeRow
-
-        required property var node
-        required property string title
-        property string subtitle: ""
-        property string badge: ""
-        readonly property bool available: audioPanel.nodeAvailable(node)
+        required property string label
+        property color fillColor: Theme.accent
+        readonly property bool available: root.nodeAvailable(node)
+        readonly property bool muted: available && node.audio.muted
 
         width: parent ? parent.width : 0
-        height: 92
-        radius: Theme.radiusMedium
-        color: Theme.backgroundDark
-        border.color: Theme.backgroundDarker
-        border.width: Theme.borderWidth
+        spacing: Theme.space.sm
 
-        Rectangle {
-            anchors {
-                left: parent.left
-                top: parent.top
-                leftMargin: 14
-                topMargin: 14
-            }
-            width: 36
-            height: 24
-            radius: Theme.radiusSmall
-            color: Theme.selection
+        Item {
+            width: parent.width
+            height: 22
 
-            Text {
-                anchors.centerIn: parent
-                text: volumeRow.badge
-                color: Theme.accent
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                font.weight: Font.DemiBold
-            }
-        }
-
-        Column {
-            anchors {
-                left: parent.left
-                right: muteButton.left
-                top: parent.top
-                leftMargin: 60
-                rightMargin: 12
-                topMargin: 10
-            }
-            spacing: 1
-
-            Text {
-                width: parent.width
-                text: volumeRow.title
-                color: volumeRow.available ? Theme.foreground : Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontBody
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
+            Label {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: control.label
+                font.weight: Font.Medium
+                tone: control.available ? "base" : "faint"
             }
 
-            Text {
-                width: parent.width
-                text: volumeRow.subtitle
-                color: Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                elide: Text.ElideRight
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.space.xs
+
+                Label {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: control.muted ? "MUTED" : root.percent(control.node)
+                    variant: "numeric"
+                    tone: control.muted ? "danger" : "base"
+                }
+
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    implicitWidth: 24
+                    implicitHeight: 22
+                    iconSize: 14
+                    enabled: control.available
+                    icon: control.muted ? (control.label === "Microphone" ? "mic-off" : "volume-x") : (control.label === "Microphone" ? "mic" : "volume-2")
+                    tone: control.muted ? "danger" : "faint"
+                    onClicked: root.toggleMute(control.node)
+                }
             }
         }
 
-        Rectangle {
-            id: muteButton
-
-            anchors {
-                right: parent.right
-                top: parent.top
-                rightMargin: 12
-                topMargin: 11
-            }
-            width: 62
-            height: 30
-            radius: Theme.radiusSmall
-            color: !volumeRow.available
-                ? Theme.backgroundDarker
-                : volumeRow.node.audio.muted ? Theme.error : muteHover.containsMouse ? Theme.selection : Theme.backgroundDarker
-
-            Text {
-                anchors.centerIn: parent
-                text: volumeRow.available && volumeRow.node.audio.muted ? "MUTED" : "MUTE"
-                color: volumeRow.available && volumeRow.node.audio.muted ? Theme.background : Theme.foregroundSoft
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                font.weight: Font.DemiBold
-            }
-
-            MouseArea {
-                id: muteHover
-
-                anchors.fill: parent
-                enabled: volumeRow.available
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: volumeRow.node.audio.muted = !volumeRow.node.audio.muted
-            }
-        }
-
-        VolumeSlider {
-            anchors {
-                left: parent.left
-                right: percentage.left
-                bottom: parent.bottom
-                leftMargin: 14
-                rightMargin: 12
-                bottomMargin: 10
-            }
-            node: volumeRow.node
-        }
-
-        Text {
-            id: percentage
-
-            anchors {
-                right: parent.right
-                bottom: parent.bottom
-                rightMargin: 14
-                bottomMargin: 14
-            }
-            width: 44
-            horizontalAlignment: Text.AlignRight
-            text: volumeRow.available ? `${Math.round(volumeRow.node.audio.volume * 100)}%` : "—"
-            color: volumeRow.available ? Theme.foregroundSoft : Theme.muted
-            font.family: Theme.fontMono
-            font.pixelSize: Theme.fontCaption
+        Slider {
+            width: parent.width
+            enabled: control.available
+            value: control.available ? control.node.audio.volume : 0
+            fillColor: control.muted ? Theme.text.disabled : control.fillColor
+            onMoved: value => root.setVolume(control.node, value)
         }
     }
 
-    Item {
-        id: keyScope
+    component StreamRow: Item {
+        id: stream
 
-        anchors.fill: parent
-        focus: audioPanel.visible
-        Keys.onEscapePressed: audioPanel.close()
+        required property var modelData
+        readonly property bool available: root.nodeAvailable(modelData)
+        readonly property bool muted: available && modelData.audio.muted
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: audioPanel.close()
+        width: parent ? parent.width : 0
+        height: 40
+
+        Column {
+            id: streamText
+
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: 118
+            spacing: 1
+
+            Label {
+                width: parent.width
+                text: root.streamName(stream.modelData)
+                variant: "small"
+                font.pixelSize: Theme.fontSize.bar
+                tone: stream.muted ? "faint" : "base"
+            }
+
+            Label {
+                width: parent.width
+                text: root.streamDetail(stream.modelData)
+                variant: "caption"
+                tone: "faint"
+            }
         }
 
-        PanelCard {
-            id: card
-
+        Slider {
             anchors {
-                top: parent.top
-                right: parent.right
-                topMargin: Theme.outerMargin + Theme.barHeight + Theme.shellGap
-                rightMargin: Theme.outerMargin
+                left: streamText.right
+                right: streamValue.left
+                leftMargin: Theme.space.md
+                rightMargin: Theme.space.sm
+                verticalCenter: parent.verticalCenter
             }
-            width: Math.max(320, Math.min(600, audioPanel.width - 48))
-            height: Math.min(720, Math.max(320, audioPanel.height - 64))
+            enabled: stream.available
+            value: stream.available ? stream.modelData.audio.volume : 0
+            fillColor: stream.muted ? Theme.text.disabled : Theme.secondary
+            onMoved: value => root.setVolume(stream.modelData, value)
+        }
 
-            MouseArea {
-                anchors.fill: parent
+        Label {
+            id: streamValue
+
+            anchors.right: streamMute.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: 38
+            horizontalAlignment: Text.AlignRight
+            text: stream.muted ? "MUTE" : root.percent(stream.modelData)
+            variant: "numeric"
+            font.pixelSize: Theme.fontSize.small
+            tone: stream.muted ? "danger" : "faint"
+        }
+
+        IconButton {
+            id: streamMute
+
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: 26
+            implicitHeight: 24
+            iconSize: 14
+            enabled: stream.available
+            icon: stream.muted ? "volume-x" : "volume-1"
+            tone: stream.muted ? "danger" : "faint"
+            onClicked: root.toggleMute(stream.modelData)
+        }
+    }
+
+    headerTrailing: [
+        Button {
+            compact: true
+            enabled: root.nodeAvailable(root.output)
+            text: root.nodeAvailable(root.output) && root.output.audio.muted ? "Unmute" : "Mute"
+            icon: root.nodeAvailable(root.output) && root.output.audio.muted ? "volume-2" : "volume-x"
+            onClicked: root.toggleMute(root.output)
+        }
+    ]
+
+    LevelControl {
+        node: root.output
+        label: "Output"
+    }
+
+    LevelControl {
+        node: root.microphone
+        label: "Microphone"
+        fillColor: Theme.secondary
+    }
+
+    SectionHeader {
+        width: parent.width
+        text: "Devices"
+        trailing: root.outputDevices.length > 0 ? String(root.outputDevices.length) : ""
+    }
+
+    Column {
+        width: parent.width
+        spacing: 2
+
+        Repeater {
+            model: root.outputDevices
+
+            delegate: ListItem {
+                required property var modelData
+
+                width: parent.width
+                icon: root.deviceIcon(modelData)
+                title: root.nodeName(modelData)
+                trailing: root.deviceKind(modelData)
+                indicator: true
+                selected: root.output !== null && modelData === root.output
+                onClicked: Pipewire.preferredDefaultAudioSink = modelData
             }
+        }
 
-            Text {
-                anchors {
-                    left: parent.left
-                    top: parent.top
-                    leftMargin: 22
-                    topMargin: 18
+        Label {
+            visible: root.outputDevices.length === 0
+            width: parent.width
+            topPadding: Theme.space.sm
+            text: Pipewire.ready ? "No output devices found" : "Discovering output devices…"
+            variant: "small"
+            tone: "faint"
+        }
+    }
+
+    SectionHeader {
+        width: parent.width
+        text: "Playing"
+        trailing: root.playbackStreams.length > 0 ? String(root.playbackStreams.length) : ""
+    }
+
+    Column {
+        width: parent.width
+        spacing: Theme.space.xs
+
+        Repeater {
+            model: root.playbackStreams
+
+            delegate: StreamRow {}
+        }
+
+        Label {
+            visible: root.playbackStreams.length === 0
+            width: parent.width
+            text: Pipewire.ready ? "Nothing is playing" : "Discovering playback streams…"
+            variant: "small"
+            tone: "faint"
+        }
+    }
+
+    SectionHeader {
+        width: parent.width
+        text: "Dante / Mac"
+        trailing: root.macStatus
+        trailingTone: root.macStatus === "AVAILABLE" ? "success" : root.macStatus === "UNAVAILABLE" ? "danger" : "warning"
+    }
+
+    Column {
+        width: parent.width
+        spacing: Theme.space.sm
+
+        Label {
+            width: parent.width
+            text: root.coreAudioDeviceSummary()
+            variant: "numeric"
+            font.pixelSize: Theme.fontSize.caption
+            font.weight: Font.Normal
+            tone: root.macDevices.length > 0 ? "soft" : "faint"
+            wrapMode: Text.Wrap
+        }
+
+        Repeater {
+            model: root.macNonLocalRoutes
+
+            delegate: Row {
+                required property var modelData
+
+                width: parent.width
+                spacing: Theme.space.sm
+
+                Icon {
+                    name: "arrow-right"
+                    size: 13
+                    color: Theme.text.faint
                 }
-                text: "Audio"
-                color: Theme.foreground
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontTitle
-                font.weight: Font.DemiBold
-            }
 
-            Text {
-                anchors {
-                    right: parent.right
-                    top: parent.top
-                    rightMargin: 22
-                    topMargin: 23
-                }
-                text: Pipewire.ready ? "PIPEWIRE  LIVE" : "CONNECTING"
-                color: Pipewire.ready ? Theme.accent : Theme.muted
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontCaption
-                font.weight: Font.DemiBold
-            }
-
-            Rectangle {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    topMargin: 62
-                }
-                height: 1
-                color: Theme.backgroundDarker
-            }
-
-            Flickable {
-                id: mixerView
-
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    bottom: footerDivider.top
-                    leftMargin: 20
-                    rightMargin: 20
-                    topMargin: 76
-                    bottomMargin: 12
-                }
-                contentWidth: width
-                contentHeight: mixerContent.implicitHeight
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-
-                Column {
-                    id: mixerContent
-
-                    width: mixerView.width
-                    spacing: 12
-
-                    Text {
-                        text: "OUTPUT"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    VolumeRow {
-                        node: audioPanel.output
-                        title: audioPanel.output ? "System output" : "No output available"
-                        subtitle: audioPanel.output ? audioPanel.nodeName(audioPanel.output) : "Waiting for a default PipeWire sink"
-                        badge: "OUT"
-                    }
-
-                    Text {
-                        topPadding: 5
-                        text: "OUTPUT DEVICE"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    Column {
-                        width: parent.width
-                        spacing: 6
-
-                        Repeater {
-                            model: audioPanel.outputDevices
-
-                            delegate: Rectangle {
-                                id: deviceRow
-
-                                required property var modelData
-                                readonly property bool selected: audioPanel.output !== null && modelData === audioPanel.output
-
-                                width: parent.width
-                                height: 48
-                                radius: Theme.radiusSmall
-                                color: selected ? Theme.selection : deviceHover.containsMouse ? Theme.backgroundDark : "transparent"
-                                border.color: selected ? Theme.accent : Theme.backgroundDarker
-                                border.width: Theme.borderWidth
-
-                                Rectangle {
-                                    anchors {
-                                        left: parent.left
-                                        verticalCenter: parent.verticalCenter
-                                        leftMargin: 12
-                                    }
-                                    width: 10
-                                    height: 10
-                                    radius: 5
-                                    color: deviceRow.selected ? Theme.accent : Theme.muted
-                                }
-
-                                Text {
-                                    anchors {
-                                        left: parent.left
-                                        right: statusText.left
-                                        verticalCenter: parent.verticalCenter
-                                        leftMargin: 34
-                                        rightMargin: 10
-                                    }
-                                    text: audioPanel.nodeName(deviceRow.modelData)
-                                    color: deviceRow.selected ? Theme.foreground : Theme.foregroundSoft
-                                    font.family: Theme.fontSans
-                                    font.pixelSize: Theme.fontBody
-                                    font.weight: deviceRow.selected ? Font.DemiBold : Font.Normal
-                                    elide: Text.ElideRight
-                                }
-
-                                Text {
-                                    id: statusText
-
-                                    anchors {
-                                        right: parent.right
-                                        verticalCenter: parent.verticalCenter
-                                        rightMargin: 12
-                                    }
-                                    text: deviceRow.selected ? "ACTIVE" : "SELECT"
-                                    color: deviceRow.selected ? Theme.accent : Theme.muted
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: Theme.fontCaption
-                                }
-
-                                MouseArea {
-                                    id: deviceHover
-
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: Pipewire.preferredDefaultAudioSink = deviceRow.modelData
-                                }
-                            }
-                        }
-
-                        Text {
-                            visible: audioPanel.outputDevices.length === 0
-                            width: parent.width
-                            height: 40
-                            verticalAlignment: Text.AlignVCenter
-                            text: Pipewire.ready ? "No output devices found" : "Discovering output devices…"
-                            color: Theme.muted
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontBody
-                        }
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 1
-                        color: Theme.backgroundDarker
-                    }
-
-                    Text {
-                        topPadding: 5
-                        text: "MICROPHONE"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    VolumeRow {
-                        node: audioPanel.microphone
-                        title: audioPanel.microphone ? "Microphone" : "No microphone available"
-                        subtitle: audioPanel.microphone ? audioPanel.nodeName(audioPanel.microphone) : "Waiting for a default PipeWire source"
-                        badge: "MIC"
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 1
-                        color: Theme.backgroundDarker
-                    }
-                    Text {
-                        topPadding: 5
-                        text: "DANTE / MAC"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: danteContent.implicitHeight + 24
-                        radius: Theme.radiusMedium
-                        color: Theme.backgroundDark
-                        border.color: audioPanel.macStatusTone
-                        border.width: Theme.borderWidth
-
-                        Column {
-                            id: danteContent
-
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                top: parent.top
-                                margins: 12
-                            }
-                            spacing: 8
-
-                            Item {
-                                width: parent.width
-                                height: 20
-
-                                Rectangle {
-                                    anchors {
-                                        left: parent.left
-                                        verticalCenter: parent.verticalCenter
-                                    }
-                                    width: 10
-                                    height: 10
-                                    radius: 5
-                                    color: audioPanel.macStatusTone
-                                }
-
-                                Text {
-                                    anchors {
-                                        left: parent.left
-                                        verticalCenter: parent.verticalCenter
-                                        leftMargin: 20
-                                    }
-                                    text: audioPanel.macStatus
-                                    color: audioPanel.macStatusTone
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: Theme.fontCaption
-                                    font.weight: Font.DemiBold
-                                }
-
-                                Text {
-                                    anchors {
-                                        right: parent.right
-                                        verticalCenter: parent.verticalCenter
-                                    }
-                                    text: `MAC / VIA · ${audioPanel.macRoutes.length} ${audioPanel.macRoutes.length === 1 ? "ROUTE" : "ROUTES"}`
-                                    color: Theme.foregroundSoft
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: Theme.fontCaption
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: audioPanel.coreAudioDeviceSummary()
-                                color: audioPanel.macDevices.length > 0 ? Theme.foregroundSoft : Theme.muted
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                                wrapMode: Text.Wrap
-                            }
-
-                            Column {
-                                width: parent.width
-                                spacing: 0
-
-                                Repeater {
-                                    model: audioPanel.macNonLocalRoutes
-
-                                    delegate: Item {
-                                        required property var modelData
-
-                                        width: parent.width
-                                        height: routeText.implicitHeight + 12
-
-                                        Rectangle {
-                                            anchors {
-                                                left: parent.left
-                                                right: parent.right
-                                                top: parent.top
-                                            }
-                                            height: 1
-                                            color: Theme.backgroundDarker
-                                        }
-
-                                        Text {
-                                            id: routeText
-
-                                            anchors {
-                                                left: parent.left
-                                                right: parent.right
-                                                verticalCenter: parent.verticalCenter
-                                                leftMargin: 8
-                                                rightMargin: 8
-                                            }
-                                            text: `${audioPanel.routeSourceLabel(parent.modelData)} → ${audioPanel.routeSinkLabel(parent.modelData)}`
-                                            color: Theme.foreground
-                                            font.family: Theme.fontMono
-                                            font.pixelSize: Theme.fontCaption
-                                            wrapMode: Text.Wrap
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    visible: audioPanel.macNonLocalRoutes.length === 0
-                                    width: parent.width
-                                    topPadding: 4
-                                    bottomPadding: 4
-                                    text: "No non-local Via routes reported"
-                                    color: Theme.muted
-                                    font.family: Theme.fontSans
-                                    font.pixelSize: Theme.fontCaption
-                                }
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: "INTERNAL MODEL · semantics unknown"
-                                color: Theme.muted
-                                font.family: Theme.fontMono
-                                font.pixelSize: Theme.fontCaption
-                            }
-
-                            Text {
-                                visible: audioPanel.macStatusMessage().length > 0
-                                width: parent.width
-                                text: audioPanel.macStatusMessage()
-                                color: audioPanel.macStatus === "UNAVAILABLE" ? Theme.error : Theme.warning
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                                wrapMode: Text.Wrap
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 1
-                        color: Theme.backgroundDarker
-                    }
-
-                    Text {
-                        topPadding: 5
-                        text: "APPLICATIONS"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    Column {
-                        width: parent.width
-                        spacing: 8
-
-                        Repeater {
-                            model: audioPanel.playbackStreams
-
-                            delegate: VolumeRow {
-                                required property var modelData
-
-                                node: modelData
-                                title: audioPanel.streamName(modelData)
-                                subtitle: audioPanel.streamDetail(modelData)
-                                badge: "APP"
-                            }
-                        }
-
-                        Text {
-                            visible: audioPanel.playbackStreams.length === 0
-                            width: parent.width
-                            height: 48
-                            verticalAlignment: Text.AlignVCenter
-                            text: Pipewire.ready ? "No applications are playing audio" : "Discovering playback streams…"
-                            color: Theme.muted
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontBody
-                        }
-                    }
+                Label {
+                    width: parent.width - 21
+                    text: `${root.routeSourceLabel(modelData)} → ${root.routeSinkLabel(modelData)}`
+                    variant: "small"
+                    tone: "soft"
+                    wrapMode: Text.Wrap
                 }
             }
+        }
 
-            Rectangle {
-                id: footerDivider
+        Label {
+            visible: root.macNonLocalRoutes.length === 0
+            width: parent.width
+            text: "No non-local Via routes reported"
+            variant: "small"
+            tone: "faint"
+        }
 
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    bottom: parent.bottom
-                    bottomMargin: 42
-                }
-                height: 1
-                color: Theme.backgroundDarker
-            }
-
-            Text {
-                anchors {
-                    left: parent.left
-                    bottom: parent.bottom
-                    leftMargin: 22
-                    bottomMargin: 13
-                }
-                text: `${audioPanel.playbackStreams.length} playback ${audioPanel.playbackStreams.length === 1 ? "stream" : "streams"}`
-                color: Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-            }
-
-            Text {
-                anchors {
-                    right: parent.right
-                    bottom: parent.bottom
-                    rightMargin: 22
-                    bottomMargin: 13
-                }
-                text: "esc or click outside to close"
-                color: Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-            }
+        Label {
+            visible: root.macStatusMessage().length > 0
+            width: parent.width
+            text: root.macStatusMessage()
+            variant: "small"
+            tone: root.macStatus === "UNAVAILABLE" ? "danger" : "warning"
+            wrapMode: Text.Wrap
         }
     }
 }

@@ -3,10 +3,13 @@ let
   helium = pkgs.callPackage ../../packages/helium.nix { };
   chatgptApp = pkgs.callPackage ../../packages/chatgpt-app { };
   claudeDesktop = pkgs.callPackage ../../packages/claude-desktop { };
-  delta = pkgs.callPackage ../../packages/delta {
-    inherit (inputs) delta-tarball;
-    version = (import ../../packages/delta/source-pin.nix).version;
-  };
+  # Official delta-nix flake package (fetchurl + patchelf of the stable
+  # release) — replaces the retired local closed-beta tarball packaging.
+  delta = inputs.delta.packages.${pkgs.stdenv.hostPlatform.system}.delta;
+  # Zed editor from the official in-repo flake (crane source build on
+  # upstream's own toolchain/nixpkgs pins). Tag-pinned in flake.nix: see
+  # the comment there for why this input must not track a moving ref.
+  zed = inputs.zed.packages.${pkgs.stdenv.hostPlatform.system}.default;
 in
 {
   home.packages = [
@@ -21,7 +24,8 @@ in
     pkgs.obs-studio
     pkgs.spotify
     pkgs.slurp
-    pkgs.zed-editor
+    # Zed official-flake source build replaces the nixpkgs binary here.
+    zed
     pkgs.wl-clipboard
     # Image editors: Aseprite for pixel-level texture work (textures.gg's
     # external editor), GIMP for photo-style edits.

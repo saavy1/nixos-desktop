@@ -9,12 +9,12 @@
 }:
 let
   pname = "ssbm-nucleus";
-  version = "0.8.9";
+  version = "0.8.10";
 
   # The hash is the SHA-256 GitHub publishes for this release asset.
   src = fetchurl {
     url = "https://github.com/ssbmNucleus/ssbmNucleus/releases/download/v${version}/SSBM-Nucleus_${version}_x86_64.AppImage";
-    hash = "sha256-vwmnQK9RVmoyjBzhBYG2onyXkoq3mB/pDNOnM7hB15A=";
+    hash = "sha256-yuVznaLIYgDUxjyivU28kZPBCMWGpSixlwMaqJuG1no=";
   };
 
   # Run the AppImage with appimage-run, which unpacks it under ~/.cache with

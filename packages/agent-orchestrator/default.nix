@@ -18,12 +18,12 @@
   makeDesktopItem,
 }:
 let
-  version = "0.12.9";
+  version = "0.13.2";
   pname = "agent-orchestrator";
 
   src = fetchurl {
     url = "https://github.com/Untrivial-ai/agent-orchestrator/releases/download/v${version}/agent-orchestrator-linux-x64.AppImage";
-    hash = "sha256-aiWO9/CB2vzY4moTVteqw8N2PKmaRT42QHh8k4ti6L8=";
+    hash = "sha256-iOdMbOmXRYVuMcsjLHJsMGwUTKzbrgtQQHfIbJVmttc=";
   };
 
   appimageContents = appimageTools.extract { inherit pname version src; };

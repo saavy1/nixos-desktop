@@ -1,10 +1,10 @@
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
-PanelWindow {
-    id: mediaPanel
+PopupPanel {
+    id: root
 
     required property var status
     readonly property bool hasPlayers: status !== null && status !== undefined && status.hasPlayers
@@ -12,24 +12,14 @@ PanelWindow {
     readonly property bool canSeek: activePlayer !== null && status.canSeek
     readonly property real duration: activePlayer !== null ? status.length : 0
     readonly property real currentPosition: activePlayer !== null ? status.position : 0
+    readonly property bool playing: status !== null && status !== undefined && status.playing
+    readonly property int playerCount: hasPlayers ? status.players.length : 0
 
-    visible: PopupController.isOpen("media")
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    exclusiveZone: 0
-    focusable: visible
-    screen: PopupController.focusedScreen
-
-    anchors {
-        top: true
-        bottom: true
-        left: true
-        right: true
-    }
-
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-media"
+    name: "media"
+    title: "Now playing"
+    subtitle: activePlayer ? `${status.playerName.toLowerCase()} · mpris` : "no player"
+    cardWidth: 460
+    ipcEnabled: false
 
     function formatTime(seconds: real): string {
         const safeSeconds = isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0
@@ -38,644 +28,288 @@ PanelWindow {
         return `${minutes}:${remainder < 10 ? "0" : ""}${remainder}`
     }
 
-    function open(): void {
+    // The panel only opens while there is a player to control.
+    function openIfPlayers(): void {
         if (!hasPlayers) {
             close()
             return
         }
 
-        PopupController.open("media")
-        Qt.callLater(() => keyScope.forceActiveFocus())
+        open()
     }
 
-    function close(): void {
-        PopupController.close("media")
-    }
-
-    function toggle(): void {
-        if (visible)
-            close()
-        else
-            open()
-    }
-
-    onVisibleChanged: {
-        if (!visible)
-            return
-
+    onOpening: {
         if (!hasPlayers)
-            close()
-        else
-            Qt.callLater(() => keyScope.forceActiveFocus())
+            Qt.callLater(() => root.close())
     }
 
     Connections {
-        target: mediaPanel.status
+        target: root.status
 
         function onHasPlayersChanged(): void {
-            if (!mediaPanel.hasPlayers && mediaPanel.visible)
-                mediaPanel.close()
+            if (!root.hasPlayers && root.shown)
+                root.close()
         }
     }
 
     IpcHandler {
         target: "media"
 
+        function open(): void {
+            root.openIfPlayers()
+        }
+
         function toggle(): void {
-            mediaPanel.toggle()
+            if (root.shown)
+                root.close()
+            else
+                root.openIfPlayers()
         }
 
         function playPause(): void {
-            if (mediaPanel.status)
-                mediaPanel.status.playPause()
+            if (root.status)
+                root.status.playPause()
         }
 
         function next(): void {
-            if (mediaPanel.status)
-                mediaPanel.status.next()
+            if (root.status)
+                root.status.next()
         }
 
         function previous(): void {
-            if (mediaPanel.status)
-                mediaPanel.status.previous()
+            if (root.status)
+                root.status.previous()
         }
 
         function close(): void {
-            mediaPanel.close()
+            root.close()
         }
     }
 
     Timer {
         interval: 1000
         repeat: true
-        running: mediaPanel.visible
-            && mediaPanel.activePlayer !== null
-            && mediaPanel.status.playing
-            && mediaPanel.activePlayer.positionSupported
+        running: root.shown
+            && root.activePlayer !== null
+            && root.status.playing
+            && root.activePlayer.positionSupported
         onTriggered: {
-            const player = mediaPanel.activePlayer
+            const player = root.activePlayer
             if (player)
                 player.positionChanged()
         }
     }
 
-    component ControlButton: Rectangle {
-        id: control
-
-        required property string label
-        property bool controlEnabled: true
-        property bool prominent: false
-        signal invoked
-
-        width: prominent ? 104 : 82
-        height: 42
-        radius: Theme.radiusMedium
-        opacity: controlEnabled ? 1 : 0.4
-        color: prominent
-            ? controlHover.containsMouse ? Theme.foreground : Theme.accent
-            : controlHover.containsMouse ? Theme.selection : Theme.backgroundDark
-        border.color: prominent ? Theme.accent : Theme.backgroundDarker
-        border.width: Theme.borderWidth
-
-        Text {
-            anchors.centerIn: parent
-            text: control.label
-            color: control.prominent ? Theme.background : Theme.foregroundSoft
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.fontCaption
-            font.weight: Font.DemiBold
+    headerTrailing: [
+        Chip {
+            visible: root.activePlayer !== null
+            interactive: false
+            text: root.playing ? "Playing" : "Paused"
+            icon: root.playing ? "audio-lines" : "pause"
+            tone: root.playing ? "success" : "neutral"
         }
+    ]
 
-        MouseArea {
-            id: controlHover
+    Row {
+        width: parent.width
+        spacing: Theme.space.lg
 
-            anchors.fill: parent
-            enabled: control.controlEnabled
-            hoverEnabled: true
-            cursorShape: control.controlEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: control.invoked()
-        }
-    }
+        RoundedImage {
+            id: artwork
 
-    component PlayerRow: Rectangle {
-        id: playerRow
-
-        required property var player
-        readonly property bool selected: mediaPanel.activePlayer !== null && player === mediaPanel.activePlayer
-        readonly property bool playerPlaying: player !== null && player !== undefined && player.isPlaying
-
-        width: parent ? parent.width : 0
-        height: 48
-        radius: Theme.radiusSmall
-        color: selected ? Theme.selection : playerHover.containsMouse ? Theme.backgroundDark : "transparent"
-        border.color: selected ? Theme.accent : Theme.backgroundDarker
-        border.width: Theme.borderWidth
-
-        Rectangle {
-            anchors {
-                left: parent.left
-                verticalCenter: parent.verticalCenter
-                leftMargin: 12
-            }
-            width: 9
-            height: 9
-            radius: 5
-            color: playerRow.playerPlaying ? Theme.success : playerRow.selected ? Theme.accent : Theme.muted
+            width: 116
+            height: 116
+            source: root.activePlayer ? root.status.albumArt : ""
+            sourceSize: Qt.size(360, 360)
+            placeholderIcon: "music"
+            bordered: true
         }
 
         Column {
-            anchors {
-                left: parent.left
-                right: playerState.left
-                verticalCenter: parent.verticalCenter
-                leftMargin: 32
-                rightMargin: 10
-            }
-            spacing: 1
+            width: parent.width - parent.spacing - artwork.width
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.space.xs
 
-            Text {
+            Label {
                 width: parent.width
-                text: mediaPanel.status.displayName(playerRow.player) || "Unknown player"
-                color: playerRow.selected ? Theme.foreground : Theme.foregroundSoft
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontBody
-                font.weight: playerRow.selected ? Font.DemiBold : Font.Normal
-                elide: Text.ElideRight
+                text: root.activePlayer ? root.status.title || "Unknown title" : "Nothing playing"
+                variant: "heading"
+                wrapMode: Text.Wrap
+                maximumLineCount: 3
             }
 
-            Text {
+            Label {
                 width: parent.width
-                text: playerRow.player && playerRow.player.trackTitle
-                    ? playerRow.player.trackTitle
-                    : playerRow.playerPlaying ? "Playing" : "No track metadata"
-                color: Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                elide: Text.ElideRight
+                visible: text.length > 0
+                text: root.activePlayer ? root.status.artist || "Unknown artist" : ""
+                tone: "soft"
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
             }
-        }
 
-        Text {
-            id: playerState
-
-            anchors {
-                right: parent.right
-                verticalCenter: parent.verticalCenter
-                rightMargin: 12
+            Label {
+                width: parent.width
+                visible: text.length > 0
+                text: root.activePlayer ? root.status.album : ""
+                variant: "small"
+                tone: "faint"
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
             }
-            text: playerRow.playerPlaying ? "PLAYING" : playerRow.selected ? "ACTIVE" : "SELECT"
-            color: playerRow.playerPlaying || playerRow.selected ? Theme.accent : Theme.muted
-            font.family: Theme.fontMono
-            font.pixelSize: Theme.fontCaption
-            font.weight: Font.DemiBold
-        }
-
-        MouseArea {
-            id: playerHover
-
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: mediaPanel.status.selectPlayer(playerRow.player)
         }
     }
 
-    Item {
-        id: keyScope
+    Column {
+        width: parent.width
+        spacing: Theme.space.xs
 
-        anchors.fill: parent
-        focus: mediaPanel.visible
-        Keys.onEscapePressed: mediaPanel.close()
+        Item {
+            id: progress
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: mediaPanel.close()
-        }
+            property real dragRatio: 0
+            readonly property real positionRatio: root.duration > 0
+                ? Math.max(0, Math.min(1, root.currentPosition / root.duration))
+                : 0
 
-        PanelCard {
-            id: card
+            width: parent.width
+            height: 20
 
-            anchors {
-                top: parent.top
-                right: parent.right
-                topMargin: Theme.outerMargin + Theme.barHeight + Theme.shellGap
-                rightMargin: Theme.outerMargin
-            }
-            width: Math.max(340, Math.min(520, mediaPanel.width - 48))
-            height: Math.min(720, Math.max(440, mediaPanel.height - 64))
+            // Seeks on release, like the old panel; the wheel seeks immediately.
+            Slider {
+                id: seekSlider
 
-            MouseArea {
                 anchors.fill: parent
-            }
-
-            Text {
-                anchors {
-                    left: parent.left
-                    top: parent.top
-                    leftMargin: 22
-                    topMargin: 18
+                visible: root.canSeek
+                value: dragging ? progress.dragRatio : progress.positionRatio
+                onMoved: value => {
+                    progress.dragRatio = value
+                    if (!dragging)
+                        root.status.seekTo(value * root.duration)
                 }
-                text: "Media"
-                color: Theme.foreground
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontTitle
-                font.weight: Font.DemiBold
-            }
-
-            Text {
-                anchors {
-                    right: parent.right
-                    top: parent.top
-                    rightMargin: 22
-                    topMargin: 23
-                }
-                text: mediaPanel.activePlayer ? mediaPanel.status.playerName.toUpperCase() : "NO PLAYER"
-                color: mediaPanel.activePlayer ? Theme.accent : Theme.muted
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontCaption
-                font.weight: Font.DemiBold
-                elide: Text.ElideLeft
-            }
-
-            Rectangle {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    topMargin: 62
-                }
-                height: 1
-                color: Theme.backgroundDarker
-            }
-
-            Flickable {
-                id: contentView
-
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    bottom: footerDivider.top
-                    leftMargin: 20
-                    rightMargin: 20
-                    topMargin: 76
-                    bottomMargin: 12
-                }
-                contentWidth: width
-                contentHeight: contentColumn.implicitHeight
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-
-                Column {
-                    id: contentColumn
-
-                    width: contentView.width
-                    spacing: 14
-
-                    Row {
-                        width: parent.width
-                        spacing: 18
-
-                        Rectangle {
-                            width: Math.min(168, Math.max(112, contentColumn.width * 0.36))
-                            height: width
-                            radius: Theme.radiusMedium
-                            color: Theme.backgroundDark
-                            border.color: Theme.backgroundDarker
-                            border.width: Theme.borderWidth
-                            clip: true
-
-                            Image {
-                                id: artwork
-
-                                anchors.fill: parent
-                                source: mediaPanel.activePlayer ? mediaPanel.status.albumArt : ""
-                                sourceSize: Qt.size(360, 360)
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                                cache: true
-                            }
-
-                            Rectangle {
-                                anchors.fill: parent
-                                visible: artwork.status !== Image.Ready
-                                color: Theme.backgroundDark
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "MEDIA"
-                                    color: Theme.muted
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: Theme.fontCaption
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-                        }
-
-                        Column {
-                            width: parent.width - parent.spacing - parent.children[0].width
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 7
-
-                            Text {
-                                width: parent.width
-                                text: mediaPanel.activePlayer
-                                    ? mediaPanel.status.title || "Unknown title"
-                                    : "Nothing playing"
-                                color: Theme.foreground
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontTitle
-                                font.weight: Font.DemiBold
-                                wrapMode: Text.Wrap
-                                maximumLineCount: 3
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: mediaPanel.activePlayer
-                                    ? mediaPanel.status.artist || "Unknown artist"
-                                    : ""
-                                color: Theme.foregroundSoft
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontBody
-                                wrapMode: Text.Wrap
-                                maximumLineCount: 2
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: mediaPanel.activePlayer ? mediaPanel.status.album : ""
-                                visible: text.length > 0
-                                color: Theme.muted
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                                wrapMode: Text.Wrap
-                                maximumLineCount: 2
-                                elide: Text.ElideRight
-                            }
-
-                            Rectangle {
-                                width: stateText.implicitWidth + 16
-                                height: 24
-                                radius: Theme.radiusSmall
-                                color: Theme.selection
-
-                                Text {
-                                    id: stateText
-
-                                    anchors.centerIn: parent
-                                    text: mediaPanel.status && mediaPanel.status.playing ? "PLAYING" : "PAUSED"
-                                    color: mediaPanel.status && mediaPanel.status.playing ? Theme.success : Theme.accent
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: Theme.fontCaption
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-                        }
-                    }
-
-                    Column {
-                        width: parent.width
-                        spacing: 7
-
-                        Item {
-                            id: progressSlider
-
-                            width: parent.width
-                            height: 24
-                            opacity: mediaPanel.canSeek ? 1 : 0.55
-                            property bool dragging: false
-                            property real dragRatio: 0
-                            readonly property real positionRatio: dragging
-                                ? dragRatio
-                                : mediaPanel.duration > 0
-                                    ? Math.max(0, Math.min(1, mediaPanel.currentPosition / mediaPanel.duration))
-                                    : 0
-
-                            function updateDrag(position: real): void {
-                                dragRatio = width > 0 ? Math.max(0, Math.min(1, position / width)) : 0
-                            }
-
-                            Rectangle {
-                                anchors {
-                                    left: parent.left
-                                    right: parent.right
-                                    verticalCenter: parent.verticalCenter
-                                }
-                                height: 6
-                                radius: 3
-                                color: Theme.backgroundDarker
-
-                                Rectangle {
-                                    width: parent.width * progressSlider.positionRatio
-                                    height: parent.height
-                                    radius: parent.radius
-                                    color: Theme.accent
-                                }
-                            }
-
-                            Rectangle {
-                                x: Math.max(0, Math.min(parent.width - width, parent.width * progressSlider.positionRatio - width / 2))
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 16
-                                height: 16
-                                radius: 8
-                                color: mediaPanel.canSeek ? Theme.foreground : Theme.muted
-                                border.color: Theme.backgroundDarker
-                                border.width: Theme.borderWidth
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                enabled: mediaPanel.canSeek
-                                cursorShape: mediaPanel.canSeek ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onPressed: mouse => {
-                                    progressSlider.dragging = true
-                                    progressSlider.updateDrag(mouse.x)
-                                }
-                                onPositionChanged: mouse => {
-                                    if (pressed)
-                                        progressSlider.updateDrag(mouse.x)
-                                }
-                                onReleased: mouse => {
-                                    progressSlider.updateDrag(mouse.x)
-                                    mediaPanel.status.seekTo(progressSlider.dragRatio * mediaPanel.duration)
-                                    progressSlider.dragging = false
-                                }
-                                onCanceled: progressSlider.dragging = false
-                            }
-                        }
-
-                        Row {
-                            width: parent.width
-
-                            Text {
-                                text: mediaPanel.formatTime(mediaPanel.currentPosition)
-                                color: Theme.muted
-                                font.family: Theme.fontMono
-                                font.pixelSize: Theme.fontCaption
-                            }
-
-                            Item {
-                                width: parent.width - parent.children[0].width - parent.children[2].width
-                                height: 1
-                            }
-
-                            Text {
-                                text: mediaPanel.duration > 0 ? mediaPanel.formatTime(mediaPanel.duration) : "--:--"
-                                color: Theme.muted
-                                font.family: Theme.fontMono
-                                font.pixelSize: Theme.fontCaption
-                            }
-                        }
-                    }
-
-                    Row {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        spacing: 10
-
-                        ControlButton {
-                            label: "PREVIOUS"
-                            controlEnabled: mediaPanel.activePlayer !== null && mediaPanel.status.canGoPrevious
-                            onInvoked: mediaPanel.status.previous()
-                        }
-
-                        ControlButton {
-                            label: mediaPanel.status && mediaPanel.status.playing ? "PAUSE" : "PLAY"
-                            prominent: true
-                            controlEnabled: mediaPanel.activePlayer !== null
-                                && (mediaPanel.status.canTogglePlaying
-                                    || mediaPanel.status.playing && mediaPanel.status.canPause
-                                    || !mediaPanel.status.playing && mediaPanel.status.canPlay)
-                            onInvoked: mediaPanel.status.togglePlaying()
-                        }
-
-                        ControlButton {
-                            label: "NEXT"
-                            controlEnabled: mediaPanel.activePlayer !== null && mediaPanel.status.canGoNext
-                            onInvoked: mediaPanel.status.next()
-                        }
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 1
-                        color: Theme.backgroundDarker
-                    }
-
-                    Text {
-                        text: "PLAYERS"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    Column {
-                        width: parent.width
-                        spacing: 6
-
-                        Repeater {
-                            model: mediaPanel.hasPlayers ? mediaPanel.status.players : []
-
-                            delegate: PlayerRow {
-                                required property var modelData
-
-                                player: modelData
-                            }
-                        }
-
-                        Rectangle {
-                            id: automaticRow
-
-                            visible: mediaPanel.status && mediaPanel.status.selectedPlayerId.length > 0
-                            width: parent.width
-                            height: visible ? 40 : 0
-                            radius: Theme.radiusSmall
-                            color: automaticHover.containsMouse ? Theme.backgroundDark : "transparent"
-                            border.color: Theme.backgroundDarker
-                            border.width: Theme.borderWidth
-
-                            Text {
-                                anchors {
-                                    left: parent.left
-                                    verticalCenter: parent.verticalCenter
-                                    leftMargin: 12
-                                }
-                                text: "Follow whichever player is playing"
-                                color: Theme.foregroundSoft
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                            }
-
-                            Text {
-                                anchors {
-                                    right: parent.right
-                                    verticalCenter: parent.verticalCenter
-                                    rightMargin: 12
-                                }
-                                text: "AUTO"
-                                color: Theme.accent
-                                font.family: Theme.fontMono
-                                font.pixelSize: Theme.fontCaption
-                                font.weight: Font.DemiBold
-                            }
-
-                            MouseArea {
-                                id: automaticHover
-
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: mediaPanel.status.useAutomaticSelection()
-                            }
-                        }
-                    }
+                onDraggingChanged: {
+                    if (!dragging && root.canSeek)
+                        root.status.seekTo(progress.dragRatio * root.duration)
                 }
             }
 
-            Rectangle {
-                id: footerDivider
+            Meter {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width
+                visible: !root.canSeek
+                value: progress.positionRatio
+                fillColor: Theme.accent
+            }
+        }
 
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    bottom: parent.bottom
-                    bottomMargin: 42
-                }
-                height: 1
-                color: Theme.backgroundDarker
+        Item {
+            width: parent.width
+            height: elapsed.implicitHeight
+
+            Label {
+                id: elapsed
+
+                anchors.left: parent.left
+                text: root.formatTime(seekSlider.dragging ? progress.dragRatio * root.duration : root.currentPosition)
+                variant: "numeric"
+                font.pixelSize: Theme.fontSize.caption
+                font.weight: Font.Normal
+                tone: "faint"
             }
 
-            Text {
-                anchors {
-                    left: parent.left
-                    bottom: parent.bottom
-                    leftMargin: 22
-                    bottomMargin: 13
-                }
-                text: mediaPanel.hasPlayers
-                    ? `${mediaPanel.status.players.length} ${mediaPanel.status.players.length === 1 ? "player" : "players"}`
-                    : "No media players"
-                color: Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-            }
-
-            Text {
-                anchors {
-                    right: parent.right
-                    bottom: parent.bottom
-                    rightMargin: 22
-                    bottomMargin: 13
-                }
-                text: "esc or click outside to close"
-                color: Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
+            Label {
+                anchors.right: parent.right
+                text: root.duration > 0 ? root.formatTime(root.duration) : "--:--"
+                variant: "numeric"
+                font.pixelSize: Theme.fontSize.caption
+                font.weight: Font.Normal
+                tone: "faint"
             }
         }
     }
+
+    Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Theme.space.md
+
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: 44
+            implicitHeight: 40
+            iconSize: 18
+            icon: "skip-back"
+            enabled: root.activePlayer !== null && root.status.canGoPrevious
+            onClicked: root.status.previous()
+        }
+
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: 56
+            implicitHeight: 44
+            iconSize: 20
+            active: true
+            icon: root.playing ? "pause" : "play"
+            enabled: root.activePlayer !== null
+                && (root.status.canTogglePlaying
+                    || root.status.playing && root.status.canPause
+                    || !root.status.playing && root.status.canPlay)
+            onClicked: root.status.togglePlaying()
+        }
+
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: 44
+            implicitHeight: 40
+            iconSize: 18
+            icon: "skip-forward"
+            enabled: root.activePlayer !== null && root.status.canGoNext
+            onClicked: root.status.next()
+        }
+    }
+
+    SectionHeader {
+        width: parent.width
+        text: "Players"
+        trailing: root.hasPlayers
+            ? `${root.playerCount} ${root.playerCount === 1 ? "player" : "players"}`
+            : "No media players"
+    }
+
+    Column {
+        width: parent.width
+        spacing: 2
+
+        Repeater {
+            model: root.hasPlayers ? root.status.players : []
+
+            delegate: ListItem {
+                id: playerItem
+
+                required property var modelData
+                readonly property bool playerPlaying: modelData !== null && modelData !== undefined && modelData.isPlaying
+
+                width: parent.width
+                icon: playerPlaying ? "audio-lines" : "music"
+                title: root.status.displayName(modelData) || "Unknown player"
+                subtitle: modelData && modelData.trackTitle
+                    ? modelData.trackTitle
+                    : playerPlaying ? "Playing" : "No track metadata"
+                trailing: playerPlaying ? "playing" : ""
+                trailingTone: "success"
+                indicator: true
+                selected: root.activePlayer !== null && modelData === root.activePlayer
+                onClicked: root.status.selectPlayer(modelData)
+            }
+        }
+
+        ListItem {
+            visible: root.status && root.status.selectedPlayerId.length > 0
+            width: parent.width
+            icon: "refresh-cw"
+            title: "Follow whichever player is playing"
+            trailing: "auto"
+            trailingTone: "accent"
+            onClicked: root.status.useAutomaticSelection()
+        }
+    }
+
 }

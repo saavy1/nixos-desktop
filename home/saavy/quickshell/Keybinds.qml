@@ -1,9 +1,11 @@
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
-PanelWindow {
+// Shortcut explorer: searchable Hyprland binds grouped by category, a detail
+// pane with key caps, and a practice mode that checks the pressed chord.
+PopupPanel {
     id: overlay
 
     property var entries: []
@@ -37,23 +39,38 @@ PanelWindow {
     readonly property int conflictCount: entries.filter(entry => entry.conflict).length
     readonly property int recentCount: entries.filter(entry => entry.recent).length
 
-    visible: PopupController.isOpen("keybinds")
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    exclusiveZone: 0
-    focusable: visible
-    screen: PopupController.focusedScreen
+    readonly property bool grouped: normalize(searchText).length === 0
+    readonly property var categoryCounts: {
+        const counts = ({})
+        filteredEntries.forEach(entry => counts[entry.category] = (counts[entry.category] || 0) + 1)
+        return counts
+    }
+    readonly property var shownEntry: practiceMode && practiceEntry ? practiceEntry : selectedEntry
+    readonly property int screenHeight: screen ? screen.height : 900
+    readonly property int sheetHeight: Math.min(Theme.keybindsHeight, screenHeight - 100)
 
-    anchors {
-        top: true
-        bottom: true
-        left: true
-        right: true
+    name: "keybinds"
+    ipcEnabled: false
+    placement: "center"
+    cardWidth: Theme.keybindsWidth
+    topOffset: Math.max(Theme.outerMargin + Theme.barHeight + Theme.shellGap,
+        Math.round((screenHeight - sheetHeight) / 2))
+    scrollable: false
+    title: "Shortcuts"
+    subtitle: `${filteredEntries.length}/${entries.length} bindings · ${conflictCount} conflicts · ${recentCount} recent`
+
+    onOpening: {
+        practiceMode = false
+        practiceStatus = ""
+        searchText = ""
+        search.text = ""
+        loadError = ""
+        copiedStatus = ""
+        refresh()
+        Qt.callLater(() => search.forceInputFocus())
     }
 
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-keybinds"
+    onKeyPressed: event => overlay.handleKey(event)
 
     function normalize(value) {
         return String(value || "").trim().toLowerCase()
@@ -149,29 +166,6 @@ PanelWindow {
         }
     }
 
-    function open() {
-        PopupController.open("keybinds")
-        loadError = ""
-        copiedStatus = ""
-        refresh()
-        Qt.callLater(() => search.forceActiveFocus())
-    }
-
-    function close() {
-        PopupController.close("keybinds")
-        practiceMode = false
-        practiceStatus = ""
-        searchText = ""
-        search.text = ""
-    }
-
-    function toggle() {
-        if (visible)
-            close()
-        else
-            open()
-    }
-
     function refresh() {
         if (!bindsProc.running)
             bindsProc.running = true
@@ -189,7 +183,9 @@ PanelWindow {
         practiceMode = true
         practiceIndex = Math.max(0, selectedIndex)
         practiceStatus = "Press the displayed chord"
-        keyboardScope.forceActiveFocus()
+        // Take focus off the search field so every key reaches the checker.
+        search.input.focus = false
+        keyScope.forceActiveFocus()
     }
 
     function nextPractice() {
@@ -240,14 +236,51 @@ PanelWindow {
         }
     }
 
+    function leavePractice() {
+        practiceMode = false
+        practiceStatus = ""
+        Qt.callLater(() => search.forceInputFocus())
+    }
+
+    function handleKey(event) {
+        if (practiceMode) {
+            if (event.key === Qt.Key_Escape)
+                leavePractice()
+            else
+                handlePractice(event)
+            event.accepted = true
+            return
+        }
+        if (event.key === Qt.Key_Escape) {
+            close()
+            event.accepted = true
+        } else if (event.key === Qt.Key_Down) {
+            selectedIndex = Math.min(filteredEntries.length - 1, selectedIndex + 1)
+            bindings.positionViewAtIndex(selectedIndex, ListView.Contain)
+            event.accepted = true
+        } else if (event.key === Qt.Key_Up) {
+            selectedIndex = Math.max(0, selectedIndex - 1)
+            bindings.positionViewAtIndex(selectedIndex, ListView.Contain)
+            event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            startPractice()
+            event.accepted = true
+        } else if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier) && selectedEntry) {
+            copyText(selectedEntry.chord, "Shortcut copied")
+            event.accepted = true
+        }
+    }
+
     IpcHandler {
         target: "keybinds"
+
+        function open(): void { overlay.open() }
         function toggle(): void { overlay.toggle() }
         function searchBindings(text: string): void {
-            if (!overlay.visible)
+            if (!overlay.shown)
                 overlay.open()
             search.text = text
-            Qt.callLater(() => search.forceActiveFocus())
+            Qt.callLater(() => search.forceInputFocus())
         }
         function state(): string {
             return JSON.stringify({
@@ -301,7 +334,7 @@ PanelWindow {
     Timer {
         interval: 5000
         repeat: true
-        running: overlay.visible && !overlay.practiceMode
+        running: overlay.shown && !overlay.practiceMode
         onTriggered: overlay.refresh()
     }
 
@@ -322,347 +355,351 @@ PanelWindow {
         values: overlay.filteredEntries
     }
 
-    MouseArea {
-        anchors.fill: parent
-        onClicked: overlay.close()
-    }
+    headerTrailing: [
+        Chip {
+            visible: overlay.conflictCount > 0
+            interactive: false
+            icon: "triangle-alert"
+            tone: "warning"
+            text: `${overlay.conflictCount} ${overlay.conflictCount === 1 ? "conflict" : "conflicts"}`
+        }
+    ]
 
-    FocusScope {
-        id: keyboardScope
-        anchors.fill: parent
-        focus: overlay.visible
+    footer: [
+        Item {
+            width: parent.width
+            height: 16
 
-        Keys.onPressed: event => {
-            if (overlay.practiceMode) {
-                if (event.key === Qt.Key_Escape) {
-                    overlay.practiceMode = false
-                    overlay.practiceStatus = ""
-                } else {
-                    overlay.handlePractice(event)
-                }
-                event.accepted = true
-                return
+            Label {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: overlay.copiedStatus.length > 0 ? overlay.copiedStatus.toLowerCase() : "↑↓ navigate · enter practice · ctrl+c copy"
+                variant: "numeric"
+                font.pixelSize: Theme.fontSize.caption
+                font.weight: Font.Normal
+                tone: overlay.copiedStatus.length > 0 ? "success" : "faint"
             }
-            if (event.key === Qt.Key_Escape) {
-                overlay.close()
-                event.accepted = true
-            } else if (event.key === Qt.Key_Down) {
-                overlay.selectedIndex = Math.min(overlay.filteredEntries.length - 1, overlay.selectedIndex + 1)
-                bindings.positionViewAtIndex(overlay.selectedIndex, ListView.Contain)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Up) {
-                overlay.selectedIndex = Math.max(0, overlay.selectedIndex - 1)
-                bindings.positionViewAtIndex(overlay.selectedIndex, ListView.Contain)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                overlay.startPractice()
-                event.accepted = true
-            } else if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier) && overlay.selectedEntry) {
-                overlay.copyText(overlay.selectedEntry.chord, "Shortcut copied")
-                event.accepted = true
+
+            Label {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: overlay.practiceMode ? "esc leave practice" : "esc or click outside to close"
+                variant: "numeric"
+                font.pixelSize: Theme.fontSize.caption
+                font.weight: Font.Normal
+                tone: "faint"
+            }
+        }
+    ]
+
+    Item {
+        id: stage
+
+        width: parent.width
+        height: overlay.sheetHeight - overlay.padding * 2 - overlay.card.headerHeight - overlay.card.footerHeight
+
+        TextField {
+            id: search
+
+            // Runs before the input, so arrows, Delete and Ctrl+C drive the list.
+            onKeyPressed: event => overlay.handleKey(event)
+
+            anchors {
+                top: parent.top
+                left: parent.left
+                right: previewDivider.left
+                rightMargin: Theme.space.xl
+            }
+            icon: "search"
+            placeholder: "Search action, category, or chord…"
+            onTextChanged: {
+                overlay.searchText = text
+                overlay.selectedIndex = 0
             }
         }
 
-        PanelCard {
-            id: card
-            anchors.centerIn: parent
-            width: Math.min(Theme.keybindsWidth, overlay.width - 80)
-            height: Math.min(Theme.keybindsHeight, overlay.height - 100)
+        ListView {
+            id: bindings
 
-            MouseArea { anchors.fill: parent }
-
-            Text {
-                id: title
-                anchors { top: parent.top; left: parent.left; topMargin: 22; leftMargin: 28 }
-                text: "Shortcut explorer"
-                color: Theme.foreground
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontTitle
-                font.weight: Font.DemiBold
+            anchors {
+                top: search.bottom
+                left: parent.left
+                right: previewDivider.left
+                bottom: parent.bottom
+                topMargin: Theme.space.md
+                rightMargin: Theme.space.lg
             }
+            model: bindingModel
+            spacing: 2
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            currentIndex: overlay.selectedIndex
 
-            Text {
-                anchors { baseline: title.baseline; right: parent.right; rightMargin: 28 }
-                text: `${overlay.filteredEntries.length}/${overlay.entries.length} bindings  ·  ${overlay.conflictCount} conflicts  ·  ${overlay.recentCount} recent`
-                color: overlay.conflictCount > 0 ? Theme.warning : Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-            }
+            delegate: Item {
+                id: binding
 
-            Rectangle {
-                id: searchBox
-                anchors { top: title.bottom; left: parent.left; right: parent.right; topMargin: 14; leftMargin: 28; rightMargin: 28 }
-                height: 46
-                radius: Theme.radiusSmall
-                color: Theme.backgroundDark
-                border.color: search.activeFocus ? Theme.accent : Theme.border
-                border.width: Theme.borderWidth
+                required property var modelData
+                required property int index
+                readonly property bool current: index === overlay.selectedIndex
+                readonly property bool hasHeader: overlay.grouped
+                    && (index === 0 || overlay.filteredEntries[index - 1].category !== modelData.category)
 
-                TextInput {
-                    id: search
-                    anchors { fill: parent; leftMargin: 14; rightMargin: 14 }
-                    verticalAlignment: TextInput.AlignVCenter
-                    color: Theme.foreground
-                    selectionColor: Theme.selection
-                    selectedTextColor: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                    focus: overlay.visible
-                    onTextChanged: {
-                        overlay.searchText = text
-                        overlay.selectedIndex = 0
+                width: bindings.width
+                height: row.height + (hasHeader ? header.height + header.anchors.topMargin + Theme.space.xs : 0)
+
+                SectionHeader {
+                    id: header
+
+                    anchors {
+                        top: parent.top
+                        left: parent.left
+                        right: parent.right
+                        topMargin: binding.index === 0 ? Theme.space.xs : Theme.space.lg
+                        leftMargin: Theme.space.sm
                     }
+                    visible: binding.hasHeader
+                    text: binding.modelData.category
+                    trailing: String(overlay.categoryCounts[binding.modelData.category] || "")
                 }
 
-                Text {
-                    anchors { left: search.left; verticalCenter: parent.verticalCenter }
-                    visible: search.text.length === 0
-                    text: "Search action, category, or chord…"
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                }
-            }
+                Item {
+                    id: row
 
-            Rectangle {
-                id: preview
-                anchors { top: searchBox.bottom; right: parent.right; bottom: footer.top; topMargin: 12; rightMargin: 24; bottomMargin: 12 }
-                width: 450
-                radius: Theme.radiusMedium
-                color: Theme.backgroundDark
-                border.color: overlay.selectedEntry && overlay.selectedEntry.conflict ? Theme.warning : Theme.backgroundDarker
-                border.width: Theme.borderWidth
-
-                Column {
-                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
-                    spacing: 14
-
-                    Text {
-                        width: parent.width
-                        text: overlay.practiceMode ? "PRACTICE" : overlay.selectedEntry ? overlay.selectedEntry.category.toUpperCase() : "SHORTCUT"
-                        color: overlay.practiceMode ? Theme.success : Theme.accent
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.Bold
+                    anchors {
+                        left: parent.left
+                        right: parent.right
+                        bottom: parent.bottom
                     }
+                    height: 40
 
-                    Text {
-                        width: parent.width
-                        text: overlay.practiceMode && overlay.practiceEntry ? overlay.practiceEntry.action
-                            : overlay.selectedEntry ? overlay.selectedEntry.action : "No shortcut selected"
-                        color: Theme.foreground
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontTitle
-                        font.weight: Font.DemiBold
-                        wrapMode: Text.Wrap
-                    }
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Theme.radius.medium
+                        color: binding.current ? Theme.selected : rowMouse.containsMouse ? Theme.hover : "transparent"
 
-                    Flow {
-                        width: parent.width
-                        spacing: 7
-                        Repeater {
-                            model: overlay.practiceMode && overlay.practiceEntry ? overlay.practiceEntry.tokens
-                                : overlay.selectedEntry ? overlay.selectedEntry.tokens : []
-                            Rectangle {
-                                required property var modelData
-                                width: keyText.implicitWidth + 20
-                                height: 36
-                                radius: Theme.radiusSmall
-                                color: Theme.selection
-                                border.color: Theme.accent
-                                border.width: Theme.borderWidth
-                                Text {
-                                    id: keyText
-                                    anchors.centerIn: parent
-                                    text: parent.modelData
-                                    color: Theme.foreground
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: Theme.fontCaption + 1
-                                    font.weight: Font.DemiBold
-                                }
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: Theme.motion.fast
                             }
                         }
                     }
 
-                    Text {
-                        visible: overlay.practiceMode
-                        width: parent.width
-                        text: overlay.practiceStatus
-                        color: overlay.practiceStatus === "Correct" ? Theme.success : Theme.warning
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontBody
-                        wrapMode: Text.Wrap
-                    }
-
-                    Text {
-                        visible: !overlay.practiceMode && overlay.selectedEntry && overlay.selectedEntry.conflict
-                        width: parent.width
-                        text: overlay.selectedEntry ? `${overlay.selectedEntry.conflictCount} actions use this chord` : ""
-                        color: Theme.warning
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontBody
-                    }
-
-                    Text {
-                        visible: !overlay.practiceMode && overlay.selectedEntry
-                        width: parent.width
-                        text: overlay.selectedEntry
-                            ? `${overlay.selectedEntry.dispatcher}${overlay.selectedEntry.argument ? `  ·  ${overlay.selectedEntry.argument}` : ""}` : ""
-                        color: Theme.muted
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        wrapMode: Text.Wrap
-                    }
-
                     Rectangle {
-                        visible: !overlay.practiceMode && overlay.selectedEntry && !overlay.selectedEntry.mouse
-                        width: parent.width
-                        height: 36
-                        radius: Theme.radiusSmall
-                        color: practiceHover.containsMouse ? Theme.selection : "transparent"
-                        border.color: Theme.border
-                        border.width: Theme.borderWidth
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Practice this chord"
-                            color: Theme.foregroundSoft
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontCaption
-                            font.weight: Font.DemiBold
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: binding.current
+                        width: 2
+                        height: parent.height - Theme.space.lg
+                        radius: 1
+                        color: Theme.accent
+                    }
+
+                    Row {
+                        anchors {
+                            left: parent.left
+                            leftMargin: Theme.space.md
+                            verticalCenter: parent.verticalCenter
                         }
-                        MouseArea {
-                            id: practiceHover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: overlay.startPractice()
+                        width: Math.max(0, combo.x - Theme.space.md * 2)
+                        spacing: Theme.space.sm
+
+                        Label {
+                            id: actionLabel
+
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.min(implicitWidth, parent.width - (categoryTag.visible ? categoryTag.implicitWidth + parent.spacing : 0)
+                                - (newChip.visible ? newChip.implicitWidth + parent.spacing : 0)
+                                - (conflictIcon.visible ? conflictIcon.implicitWidth + parent.spacing : 0))
+                            text: binding.modelData.action
+                            tone: binding.current ? "base" : "soft"
+                            font.weight: binding.current ? Font.Medium : Font.Normal
+                        }
+
+                        Label {
+                            id: categoryTag
+
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: !overlay.grouped
+                            text: binding.modelData.category
+                            variant: "label"
+                            tone: "faint"
+                        }
+
+                        Chip {
+                            id: newChip
+
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: binding.modelData.recent
+                            implicitHeight: 18
+                            interactive: false
+                            tone: "accent"
+                            text: "new"
+                        }
+
+                        Icon {
+                            id: conflictIcon
+
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: binding.modelData.conflict
+                            name: "triangle-alert"
+                            size: 13
+                            color: Theme.warning
                         }
                     }
 
-                    Rectangle {
-                        visible: !overlay.practiceMode && overlay.selectedEntry
-                        width: parent.width
-                        height: 36
-                        radius: Theme.radiusSmall
-                        color: copyHover.containsMouse ? Theme.selection : "transparent"
-                        border.color: Theme.border
-                        border.width: Theme.borderWidth
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Copy shortcut"
-                            color: Theme.foregroundSoft
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontCaption
-                            font.weight: Font.DemiBold
-                        }
-                        MouseArea {
-                            id: copyHover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: overlay.copyText(overlay.selectedEntry.chord, "Shortcut copied")
-                        }
-                    }
-                }
-            }
+                    KeyCombo {
+                        id: combo
 
-            ListView {
-                id: bindings
-                anchors { top: searchBox.bottom; left: parent.left; right: preview.left; bottom: footer.top; topMargin: 12; leftMargin: 24; rightMargin: 12; bottomMargin: 12 }
-                model: bindingModel
-                spacing: 4
-                clip: true
-                currentIndex: overlay.selectedIndex
-
-                delegate: Rectangle {
-                    id: row
-                    required property var modelData
-                    required property int index
-                    width: bindings.width
-                    height: 58
-                    radius: Theme.radiusSmall
-                    color: index === overlay.selectedIndex ? Theme.selection : rowHover.containsMouse ? Theme.backgroundDark : "transparent"
-                    border.color: modelData.conflict ? Theme.warning : index === overlay.selectedIndex ? Theme.accent : "transparent"
-                    border.width: Theme.borderWidth
-
-                    Column {
-                        anchors { left: parent.left; right: chord.left; verticalCenter: parent.verticalCenter; leftMargin: 12; rightMargin: 12 }
-                        spacing: 3
-                        Text {
-                            width: parent.width
-                            text: `${row.modelData.category}${row.modelData.recent ? "  ·  NEW" : ""}`
-                            color: row.modelData.recent ? Theme.accent : Theme.muted
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontCaption
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            width: parent.width
-                            text: row.modelData.action
-                            color: Theme.foreground
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontBody
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    Text {
-                        id: chord
-                        anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 12 }
-                        width: 230
-                        horizontalAlignment: Text.AlignRight
-                        text: row.modelData.chord
-                        color: row.modelData.conflict ? Theme.warning : Theme.foregroundSoft
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideLeft
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.space.md
+                        anchors.verticalCenter: parent.verticalCenter
+                        tokens: binding.modelData.tokens
+                        tone: binding.modelData.conflict ? "warning" : binding.current ? "base" : "soft"
                     }
 
                     MouseArea {
-                        id: rowHover
+                        id: rowMouse
+
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onEntered: overlay.selectedIndex = row.index
-                        onClicked: overlay.selectedIndex = row.index
+                        onEntered: overlay.selectedIndex = binding.index
+                        onClicked: overlay.selectedIndex = binding.index
                         onDoubleClicked: overlay.startPractice()
                     }
                 }
             }
+        }
 
-            Text {
-                anchors.centerIn: bindings
-                visible: overlay.loadError.length > 0 || overlay.filteredEntries.length === 0
-                width: bindings.width - 30
-                text: overlay.loadError.length > 0 ? overlay.loadError : "No matching shortcuts"
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                color: overlay.loadError.length > 0 ? Theme.error : Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontBody
+        Label {
+            anchors.centerIn: bindings
+            visible: overlay.loadError.length > 0 || overlay.filteredEntries.length === 0
+            width: bindings.width - Theme.space.xxl * 2
+            text: overlay.loadError.length > 0 ? overlay.loadError : "No matching shortcuts"
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            tone: overlay.loadError.length > 0 ? "danger" : "faint"
+        }
+
+        Hairline {
+            id: previewDivider
+
+            anchors {
+                top: parent.top
+                bottom: parent.bottom
+                right: preview.left
+                rightMargin: Theme.space.xl
+            }
+            vertical: true
+        }
+
+        Column {
+            id: preview
+
+            anchors {
+                top: parent.top
+                right: parent.right
+                topMargin: Theme.space.xs
+            }
+            width: 420
+            spacing: Theme.space.lg
+
+            Label {
+                width: parent.width
+                text: overlay.practiceMode ? "Practice" : overlay.selectedEntry ? overlay.selectedEntry.category : "Shortcut"
+                variant: "label"
+                tone: overlay.practiceMode ? "success" : "accent"
             }
 
-            Item {
-                id: footer
-                anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: 28; rightMargin: 28 }
-                height: 46
-                Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.backgroundDarker }
-                Text {
-                    anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-                    text: overlay.copiedStatus.length > 0 ? overlay.copiedStatus : "↑↓ navigate  ·  Enter practice  ·  Ctrl+C copy"
-                    color: overlay.copiedStatus.length > 0 ? Theme.success : Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
+            Label {
+                width: parent.width
+                text: overlay.shownEntry ? overlay.shownEntry.action : "No shortcut selected"
+                variant: "title"
+                font.family: Theme.fontDisplay
+                font.weight: Font.Medium
+                wrapMode: Text.Wrap
+            }
+
+            KeyCombo {
+                width: parent.width
+                large: true
+                tokens: overlay.shownEntry ? overlay.shownEntry.tokens : []
+                tone: !overlay.practiceMode && overlay.shownEntry && overlay.shownEntry.conflict ? "warning" : "base"
+            }
+
+            Label {
+                visible: overlay.practiceMode
+                width: parent.width
+                text: overlay.practiceStatus
+                tone: overlay.practiceStatus === "Correct" ? "success" : "warning"
+                wrapMode: Text.Wrap
+            }
+
+            Row {
+                visible: !overlay.practiceMode && overlay.selectedEntry !== null && overlay.selectedEntry.conflict
+                width: parent.width
+                spacing: Theme.space.sm
+
+                Icon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    name: "triangle-alert"
+                    size: 14
+                    color: Theme.warning
                 }
-                Text {
-                    anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-                    text: overlay.practiceMode ? "esc leave practice" : "esc or click outside to close"
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
+
+                Label {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: overlay.selectedEntry ? `${overlay.selectedEntry.conflictCount} actions use this chord` : ""
+                    tone: "warning"
                 }
+            }
+
+            Column {
+                visible: !overlay.practiceMode && overlay.selectedEntry !== null
+                width: parent.width
+                spacing: Theme.space.sm
+
+                SectionHeader {
+                    width: parent.width
+                    text: "Dispatcher"
+                }
+
+                Label {
+                    width: parent.width
+                    text: overlay.selectedEntry
+                        ? `${overlay.selectedEntry.dispatcher}${overlay.selectedEntry.argument ? ` · ${overlay.selectedEntry.argument}` : ""}` : ""
+                    variant: "numeric"
+                    font.pixelSize: Theme.fontSize.caption
+                    font.weight: Font.Normal
+                    tone: "faint"
+                    wrapMode: Text.WrapAnywhere
+                }
+            }
+
+            Row {
+                visible: !overlay.practiceMode && overlay.selectedEntry !== null
+                spacing: Theme.space.sm
+
+                Button {
+                    visible: overlay.selectedEntry !== null && !overlay.selectedEntry.mouse
+                    variant: "primary"
+                    icon: "keyboard"
+                    text: "Practice this chord"
+                    onClicked: overlay.startPractice()
+                }
+
+                Button {
+                    icon: "copy"
+                    text: "Copy shortcut"
+                    onClicked: overlay.copyText(overlay.selectedEntry.chord, "Shortcut copied")
+                }
+            }
+
+            Button {
+                visible: overlay.practiceMode
+                icon: "x"
+                text: "Leave practice"
+                onClicked: overlay.leavePractice()
             }
         }
     }

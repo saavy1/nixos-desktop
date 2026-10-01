@@ -1,10 +1,10 @@
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
-PanelWindow {
+PopupPanel {
     id: panel
 
     property var monitors: []
@@ -40,44 +40,36 @@ PanelWindow {
         : brightnessBackend === "ddc" ? ddcPercent
         : -1
     readonly property bool refreshing: monitorProc.running || brightnessDetectProc.running || ddcDetectProc.running
+    // Brightness shown while the slider is dragged; committed on release.
+    property int brightnessPreview: -1
+    readonly property bool displayChangeLocked: actionRunning || pendingDisplayRollbackCommand.length > 0
 
-    visible: PopupController.isOpen("display")
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    exclusiveZone: 0
-    focusable: visible
-    screen: PopupController.focusedScreen
+    name: "display"
+    title: "Display"
+    subtitle: activeMonitorCount > 0
+        ? `${activeMonitorCount} active · ${focusedMonitorName || "no focused output"}`
+        : refreshing ? "querying outputs…" : "no active outputs reported"
+    cardWidth: 480
+    ipcEnabled: false
 
-    anchors {
-        top: true
-        bottom: true
-        left: true
-        right: true
-    }
-
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-display"
-
-    function open(): void {
-        PopupController.open("display")
+    onOpening: {
+        pendingDisableName = ""
         if (focusedMonitorName.length > 0)
             selectedName = focusedMonitorName
         operationStatus = ""
         requestRefresh(true)
-        Qt.callLater(() => keyboardScope.forceActiveFocus())
     }
 
-    function close(): void {
-        pendingDisableName = ""
-        PopupController.close("display")
-    }
-
-    function toggle(): void {
-        if (visible)
-            close()
-        else
-            open()
+    onKeyPressed: event => {
+        if (event.key !== Qt.Key_Escape)
+            return
+        if (pendingDisableName.length > 0) {
+            cancelDisable()
+            event.accepted = true
+        } else if (pendingDisplayRollbackCommand.length > 0) {
+            revertDisplayChange()
+            event.accepted = true
+        }
     }
 
     function monitorNamed(name): var {
@@ -160,7 +152,7 @@ PanelWindow {
     }
 
     function requestRefresh(includeCapabilities): void {
-        if (!visible)
+        if (!shown)
             return
         if (!monitorProc.running)
             monitorProc.running = true
@@ -202,9 +194,9 @@ PanelWindow {
 
     function outputDetail(monitor): string {
         if (!monitor.enabled)
-            return `${monitor.description}  ·  disabled`
+            return `${monitor.description} · disabled`
         const vrr = monitor.vrr === 0 ? "VRR off" : monitor.vrr === 2 ? "VRR fullscreen" : "VRR on"
-        return `${modeLabel(monitor)}  ·  ${monitor.scale.toFixed(2)}×  ·  ${transformLabel(monitor.transform)}  ·  ${vrr}`
+        return `${modeLabel(monitor)} · ${monitor.scale.toFixed(2)}× · ${transformLabel(monitor.transform)} · ${vrr}`
     }
 
     function validScalePresets(monitor): var {
@@ -431,7 +423,6 @@ PanelWindow {
         }).filter(device => device.name.length > 0)
     }
 
-
     function parseDdcDisplays(text): void {
         const displays = []
         let current = null
@@ -485,7 +476,7 @@ PanelWindow {
     }
 
     function refreshBrightness(): void {
-        if (!visible)
+        if (!shown)
             return
         if (brightnessBackend === "backlight") {
             if (!brightnessDetectProc.running)
@@ -554,9 +545,19 @@ PanelWindow {
     IpcHandler {
         target: "display"
 
+        function open(): void {
+            panel.open()
+        }
+
+        function close(): void {
+            panel.pendingDisableName = ""
+            panel.close()
+        }
+
         function toggle(): void {
             panel.toggle()
         }
+
         function refreshRate(refresh: int): void {
             panel.setRefresh(refresh)
         }
@@ -576,17 +577,12 @@ PanelWindow {
         function revert(): void {
             panel.revertDisplayChange()
         }
-
-
-        function close(): void {
-            panel.close()
-        }
     }
 
     Timer {
         interval: 6000
         repeat: true
-        running: panel.visible
+        running: panel.shown
         onTriggered: panel.requestRefresh(false)
     }
 
@@ -602,7 +598,6 @@ PanelWindow {
         repeat: false
         onTriggered: panel.revertDisplayChange()
     }
-
 
     Process {
         id: monitorProc
@@ -711,7 +706,7 @@ PanelWindow {
             } else {
                 panel.operationStatus = `${panel.actionDescription} failed${failureText.length > 0 ? ` — ${failureText}` : ""}`
             }
-            if (panel.visible) {
+            if (panel.shown) {
                 if (panel.actionKind === "brightness")
                     Qt.callLater(() => panel.refreshBrightness())
                 else if (panel.actionKind === "monitor")
@@ -721,798 +716,459 @@ PanelWindow {
         }
     }
 
-    component ActionButton: Rectangle {
-        id: button
-        required property string label
-        property bool destructive: false
-        property bool selected: false
-        signal activated()
+    headerTrailing: [
+        Button {
+            compact: true
+            icon: "refresh-cw"
+            text: panel.refreshing ? "Refreshing…" : "Refresh"
+            enabled: !panel.refreshing
+            onClicked: panel.requestRefresh(true)
+        }
+    ]
 
-        implicitWidth: labelText.implicitWidth + 24
-        implicitHeight: 34
-        radius: Theme.radiusSmall
-        color: !enabled ? Theme.backgroundDarker
-            : selected ? Theme.selection
-            : hover.containsMouse ? Theme.selection
-            : Theme.backgroundDark
-        border.color: destructive ? Theme.error : selected ? Theme.accent : Theme.border
-        border.width: Theme.borderWidth
-        opacity: enabled ? 1 : 0.45
+    footer: [
+        Label {
+            width: parent ? parent.width : 0
+            text: panel.operationStatus.length > 0 ? panel.operationStatus : "Changes apply for this Hyprland session"
+            variant: "small"
+            tone: panel.operationStatus.includes("failed") || panel.operationStatus.includes("cannot")
+                || panel.operationStatus.includes("unavailable") || panel.operationStatus.includes("Unable")
+                ? "warning" : "faint"
+        }
+    ]
 
-        Text {
-            id: labelText
-            anchors.centerIn: parent
-            text: button.label
-            color: button.destructive ? Theme.error : button.selected ? Theme.accent : Theme.foreground
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.fontCaption
-            font.weight: Font.DemiBold
+    // Outputs
+
+    SectionHeader {
+        width: parent.width
+        text: "Outputs"
+        trailing: panel.monitors.length > 0 ? String(panel.monitors.length) : ""
+    }
+
+    Column {
+        width: parent.width
+        spacing: 2
+
+        Repeater {
+            model: panel.monitors
+
+            delegate: ListItem {
+                id: outputRow
+
+                required property var modelData
+
+                width: parent ? parent.width : 0
+                icon: !modelData.enabled ? "monitor-off" : modelData.internal ? "laptop" : "monitor"
+                title: modelData.name
+                subtitle: panel.outputDetail(modelData)
+                trailing: modelData.focused ? "focused" : ""
+                trailingTone: "success"
+                selected: panel.selectedName === modelData.name
+                onClicked: panel.selectMonitor(modelData.name)
+
+                Button {
+                    compact: true
+                    text: outputRow.modelData.enabled ? "Disable" : "Enable"
+                    enabled: !panel.actionRunning && (!outputRow.modelData.enabled || panel.activeMonitorCount > 1)
+                    onClicked: panel.requestMonitorEnabled(outputRow.modelData.name, !outputRow.modelData.enabled)
+                }
+            }
         }
 
-        MouseArea {
-            id: hover
-            anchors.fill: parent
-            hoverEnabled: true
-            enabled: button.enabled
-            cursorShape: button.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: button.activated()
+        Column {
+            visible: panel.monitors.length === 0
+            width: parent.width
+            topPadding: Theme.space.md
+            bottomPadding: Theme.space.md
+            spacing: Theme.space.sm
+
+            Icon {
+                anchors.horizontalCenter: parent.horizontalCenter
+                name: "monitor-off"
+                size: 22
+                color: Theme.text.faint
+            }
+
+            Label {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                text: panel.refreshing ? "Discovering Hyprland outputs…" : "No display outputs were found"
+                tone: "soft"
+            }
         }
     }
 
-    component PercentSlider: Item {
-        id: slider
-        required property int value
-        property bool available: true
-        property int preview: value >= 0 ? value : 0
-        readonly property int shownValue: dragArea.pressed ? preview : Math.max(0, value)
-        signal requested(int value)
+    // Disable confirmation
 
-        implicitHeight: 28
-        opacity: available ? 1 : 0.4
-        onValueChanged: {
-            if (!dragArea.pressed)
-                preview = Math.max(0, value)
-        }
+    Rectangle {
+        visible: panel.pendingDisableName.length > 0
+        width: parent.width
+        height: confirmColumn.implicitHeight + Theme.space.lg * 2
+        radius: Theme.radius.medium
+        color: Theme.dangerTint
+        border.width: Theme.borderWidth
+        border.color: Theme.withAlpha(Theme.danger, Theme.alpha.lineStrong)
 
-        Rectangle {
+        Column {
+            id: confirmColumn
+
             anchors {
                 left: parent.left
                 right: parent.right
-                verticalCenter: parent.verticalCenter
-            }
-            height: 7
-            radius: 4
-            color: Theme.backgroundDarker
-
-            Rectangle {
-                width: parent.width * slider.shownValue / 100
-                height: parent.height
-                radius: parent.radius
-                color: Theme.accent
-            }
-        }
-
-        Rectangle {
-            x: Math.max(0, Math.min(parent.width - width, parent.width * slider.shownValue / 100 - width / 2))
-            anchors.verticalCenter: parent.verticalCenter
-            width: 16
-            height: 16
-            radius: 8
-            color: slider.available ? Theme.foreground : Theme.muted
-            border.color: Theme.backgroundDarker
-            border.width: Theme.borderWidth
-        }
-
-        MouseArea {
-            id: dragArea
-            anchors.fill: parent
-            enabled: slider.available
-            cursorShape: Qt.PointingHandCursor
-            function updateValue(xPosition): void {
-                slider.preview = Math.max(1, Math.min(100, Math.round(xPosition * 100 / width)))
-            }
-            onPressed: mouse => updateValue(mouse.x)
-            onPositionChanged: mouse => {
-                if (pressed)
-                    updateValue(mouse.x)
-            }
-            onReleased: slider.requested(slider.preview)
-        }
-    }
-
-    FocusScope {
-        id: keyboardScope
-        anchors.fill: parent
-        focus: panel.visible
-
-        Keys.onPressed: event => {
-            if (event.key === Qt.Key_Escape) {
-                if (panel.pendingDisableName.length > 0)
-                    panel.cancelDisable()
-                else if (panel.pendingDisplayRollbackCommand.length > 0)
-                    panel.revertDisplayChange()
-                else
-                    panel.close()
-                event.accepted = true
-            }
-        }
-
-        MouseArea {
-            anchors.fill: parent
-            onClicked: panel.close()
-        }
-
-        PanelCard {
-            id: card
-            anchors {
                 top: parent.top
-                right: parent.right
-                topMargin: Theme.outerMargin + Theme.barHeight + Theme.shellGap
-                rightMargin: Theme.outerMargin
+                margins: Theme.space.lg
             }
-            width: Math.min(760, panel.width - Theme.outerMargin * 2)
-            height: Math.min(800, panel.height - Theme.outerMargin * 2 - Theme.barHeight)
+            spacing: Theme.space.sm
 
-            MouseArea {
-                anchors.fill: parent
+            Label {
+                width: parent.width
+                text: "Disable display?"
+                variant: "heading"
+            }
+
+            Label {
+                width: parent.width
+                text: `${panel.pendingDisableName} will stop displaying immediately. Windows and workspaces may move to another active output.`
+                variant: "small"
+                tone: "soft"
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                width: parent.width
+                text: `${panel.activeMonitorCount - 1} display${panel.activeMonitorCount - 1 === 1 ? "" : "s"} will remain active.`
+                variant: "small"
+                tone: "warning"
             }
 
             Item {
-                id: header
-                anchors {
-                    top: parent.top
-                    left: parent.left
-                    right: parent.right
-                    margins: 20
-                }
-                height: 54
+                width: parent.width
+                height: confirmButtons.height + Theme.space.xs
 
-                Column {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
-                    spacing: 2
+                Row {
+                    id: confirmButtons
 
-                    Text {
-                        text: "Displays"
-                        color: Theme.foreground
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontTitle
-                        font.weight: Font.DemiBold
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    spacing: Theme.space.sm
+
+                    Button {
+                        compact: true
+                        text: "Cancel"
+                        onClicked: panel.cancelDisable()
                     }
 
-                    Text {
-                        text: panel.activeMonitorCount > 0
-                            ? `${panel.activeMonitorCount} active  ·  ${panel.focusedMonitorName || "no focused output"}`
-                            : "No active outputs reported"
-                        color: Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                    }
-                }
-
-                ActionButton {
-                    anchors {
-                        right: parent.right
-                        verticalCenter: parent.verticalCenter
-                    }
-                    label: panel.refreshing ? "Refreshing…" : "Refresh"
-                    enabled: !panel.refreshing
-                    onActivated: panel.requestRefresh(true)
-                }
-            }
-
-            Rectangle {
-                id: headerDivider
-                anchors {
-                    top: header.bottom
-                    left: parent.left
-                    right: parent.right
-                    leftMargin: 20
-                    rightMargin: 20
-                }
-                height: 1
-                color: Theme.backgroundDarker
-            }
-
-            Flickable {
-                id: scroller
-                anchors {
-                    top: headerDivider.bottom
-                    bottom: footerDivider.top
-                    left: parent.left
-                    right: parent.right
-                    margins: 20
-                    topMargin: 14
-                    bottomMargin: 12
-                }
-                contentWidth: width
-                contentHeight: content.implicitHeight
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-
-                Column {
-                    id: content
-                    width: scroller.width
-                    spacing: 14
-
-                    Text {
-                        text: "OUTPUTS"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    Column {
-                        width: parent.width
-                        spacing: 8
-
-                        Repeater {
-                            model: panel.monitors
-
-                            delegate: Rectangle {
-                                id: outputRow
-                                required property var modelData
-
-                                width: parent ? parent.width : 0
-                                height: 76
-                                radius: Theme.radiusMedium
-                                color: panel.selectedName === modelData.name ? Theme.selection : Theme.backgroundDark
-                                border.color: modelData.focused ? Theme.accent : panel.selectedName === modelData.name ? Theme.border : Theme.backgroundDarker
-                                border.width: Theme.borderWidth
-                                opacity: modelData.enabled ? 1 : 0.65
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: panel.selectMonitor(outputRow.modelData.name)
-                                }
-
-                                Rectangle {
-                                    anchors {
-                                        left: parent.left
-                                        verticalCenter: parent.verticalCenter
-                                        leftMargin: 14
-                                    }
-                                    width: 42
-                                    height: 28
-                                    radius: Theme.radiusSmall
-                                    color: outputRow.modelData.enabled ? Theme.backgroundDarker : "transparent"
-                                    border.color: outputRow.modelData.enabled ? Theme.accent : Theme.muted
-                                    border.width: Theme.borderWidth
-
-                                    Rectangle {
-                                        visible: outputRow.modelData.enabled
-                                        anchors {
-                                            horizontalCenter: parent.horizontalCenter
-                                            top: parent.bottom
-                                        }
-                                        width: 14
-                                        height: 3
-                                        color: Theme.accent
-                                    }
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: outputRow.modelData.internal ? "LAP" : "EXT"
-                                        color: outputRow.modelData.enabled ? Theme.accent : Theme.muted
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: Theme.fontCaption - 1
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-
-                                Column {
-                                    anchors {
-                                        left: parent.left
-                                        right: outputToggle.left
-                                        verticalCenter: parent.verticalCenter
-                                        leftMargin: 68
-                                        rightMargin: 14
-                                    }
-                                    spacing: 3
-
-                                    Row {
-                                        spacing: 8
-                                        Text {
-                                            text: outputRow.modelData.name
-                                            color: Theme.foreground
-                                            font.family: Theme.fontMono
-                                            font.pixelSize: Theme.fontBody
-                                            font.weight: Font.DemiBold
-                                        }
-                                        Text {
-                                            visible: outputRow.modelData.focused
-                                            text: "FOCUSED"
-                                            color: Theme.success
-                                            font.family: Theme.fontSans
-                                            font.pixelSize: Theme.fontCaption - 1
-                                            font.weight: Font.DemiBold
-                                        }
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        text: panel.outputDetail(outputRow.modelData)
-                                        color: Theme.muted
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: Theme.fontCaption
-                                        elide: Text.ElideRight
-                                    }
-                                }
-
-                                ActionButton {
-                                    id: outputToggle
-                                    anchors {
-                                        right: parent.right
-                                        verticalCenter: parent.verticalCenter
-                                        rightMargin: 12
-                                    }
-                                    label: outputRow.modelData.enabled ? "Disable" : "Enable"
-                                    destructive: outputRow.modelData.enabled
-                                    enabled: !panel.actionRunning && (!outputRow.modelData.enabled || panel.activeMonitorCount > 1)
-                                    onActivated: panel.requestMonitorEnabled(outputRow.modelData.name, !outputRow.modelData.enabled)
-                                }
-                            }
-                        }
-
-                        Text {
-                            visible: panel.monitors.length === 0
-                            width: parent.width
-                            height: 56
-                            verticalAlignment: Text.AlignVCenter
-                            text: panel.refreshing ? "Discovering Hyprland outputs…" : "No display outputs were found"
-                            color: Theme.muted
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontBody
-                        }
-                    }
-
-                    Rectangle {
-                        visible: panel.selectedOutput !== null
-                        width: parent.width
-                        height: selectedControls.implicitHeight + 28
-                        radius: Theme.radiusMedium
-                        color: Theme.backgroundDark
-                        border.color: Theme.backgroundDarker
-                        border.width: Theme.borderWidth
-
-                        Column {
-                            id: selectedControls
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                top: parent.top
-                                margins: 14
-                            }
-                            spacing: 12
-
-                            Row {
-                                width: parent.width
-                                spacing: 10
-
-                                Column {
-                                    width: parent.width - vrrButton.width - 10
-                                    spacing: 3
-
-                                    Text {
-                                        width: parent.width
-                                        text: panel.selectedOutput ? panel.selectedOutput.description : ""
-                                        color: Theme.foreground
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: Theme.fontBody
-                                        font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        text: panel.selectedOutput && panel.selectedOutput.enabled
-                                            ? `Position ${panel.selectedOutput.x}, ${panel.selectedOutput.y}  ·  ${panel.transformLabel(panel.selectedOutput.transform)}  ·  VRR ${panel.selectedOutput.vrr === 0 ? "off" : panel.selectedOutput.vrr === 2 ? "fullscreen" : "on"}`
-                                            : "Enable this output to adjust it"
-                                        color: Theme.muted
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: Theme.fontCaption
-                                        elide: Text.ElideRight
-                                    }
-                                }
-
-                                ActionButton {
-                                    id: vrrButton
-                                    label: panel.selectedOutput && panel.selectedOutput.vrr !== 0 ? "VRR on" : "VRR off"
-                                    selected: panel.selectedOutput !== null && panel.selectedOutput.vrr !== 0
-                                    enabled: panel.selectedOutput !== null && panel.selectedOutput.enabled && !panel.actionRunning
-                                    onActivated: panel.toggleVrr()
-                                }
-                            }
-
-                            PanelDivider {
-                                vertical: false
-                                width: parent.width
-                            }
-                            Text {
-                                text: panel.selectedOutput
-                                    ? `SIGNAL  ·  ${panel.selectedOutput.refreshRate.toFixed(0)} HZ  ·  ${panel.bitdepthFor(panel.selectedOutput)}-BIT  ·  ${String(panel.selectedOutput.colorManagementPreset).toUpperCase()}  ·  ${panel.selectedOutput.currentFormat}`
-                                    : "SIGNAL"
-                                color: Theme.accent
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                                font.weight: Font.DemiBold
-                            }
-
-                            Flow {
-                                width: parent.width
-                                spacing: 8
-
-                                Repeater {
-                                    model: panel.availableRefreshPresets(panel.selectedOutput)
-
-                                    ActionButton {
-                                        required property var modelData
-                                        label: `${Number(modelData)} Hz`
-                                        selected: panel.selectedOutput !== null && Math.abs(panel.selectedOutput.refreshRate - Number(modelData)) < 0.5
-                                        enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
-                                        onActivated: panel.setRefresh(Number(modelData))
-                                    }
-                                }
-
-                                ActionButton {
-                                    label: "8-bit"
-                                    selected: panel.bitdepthFor(panel.selectedOutput) === 8
-                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
-                                    onActivated: panel.setBitdepth(8)
-                                }
-
-                                ActionButton {
-                                    label: "10-bit"
-                                    selected: panel.bitdepthFor(panel.selectedOutput) === 10
-                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
-                                    onActivated: panel.setBitdepth(10)
-                                }
-
-                                ActionButton {
-                                    label: "SDR"
-                                    selected: panel.colorModeFor(panel.selectedOutput) === "sdr"
-                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
-                                    onActivated: panel.setColorMode("sdr")
-                                }
-
-                                ActionButton {
-                                    label: "Auto HDR"
-                                    selected: panel.colorModeFor(panel.selectedOutput) === "auto"
-                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
-                                    onActivated: panel.setColorMode("auto")
-                                }
-
-                                ActionButton {
-                                    label: "HDR on"
-                                    selected: panel.colorModeFor(panel.selectedOutput) === "hdr"
-                                    enabled: !panel.actionRunning && panel.pendingDisplayRollbackCommand.length === 0
-                                    onActivated: panel.setColorMode("hdr")
-                                }
-                            }
-
-                            Row {
-                                visible: panel.pendingDisplayRollbackCommand.length > 0
-                                width: parent.width
-                                spacing: 8
-
-                                Text {
-                                    width: parent.width - keepDisplayButton.width - revertDisplayButton.width - 16
-                                    height: keepDisplayButton.height
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: `${panel.pendingDisplayDescription}  ·  reverting in 15 seconds`
-                                    color: Theme.warning
-                                    font.family: Theme.fontSans
-                                    font.pixelSize: Theme.fontCaption
-                                    elide: Text.ElideRight
-                                }
-
-                                ActionButton {
-                                    id: revertDisplayButton
-                                    label: "Revert"
-                                    destructive: true
-                                    enabled: !panel.actionRunning
-                                    onActivated: panel.revertDisplayChange()
-                                }
-
-                                ActionButton {
-                                    id: keepDisplayButton
-                                    label: "Keep"
-                                    enabled: !panel.actionRunning
-                                    onActivated: panel.confirmDisplayChange()
-                                }
-                            }
-
-                            PanelDivider {
-                                vertical: false
-                                width: parent.width
-                            }
-
-
-                            Text {
-                                text: "SAFE SCALE"
-                                color: Theme.accent
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                                font.weight: Font.DemiBold
-                            }
-
-                            Flow {
-                                width: parent.width
-                                spacing: 8
-
-                                Repeater {
-                                    model: panel.validScalePresets(panel.selectedOutput)
-
-                                    ActionButton {
-                                        required property var modelData
-                                        label: `${Number(modelData).toFixed(Number(modelData) % 1 === 0 ? 0 : 2)}×`
-                                        selected: panel.selectedOutput !== null && Math.abs(panel.selectedOutput.scale - Number(modelData)) < 0.01
-                                        enabled: !panel.actionRunning
-                                        onActivated: panel.setScale(Number(modelData))
-                                    }
-                                }
-                            }
-
-                            Text {
-                                visible: panel.selectedOutput !== null && panel.selectedOutput.enabled && panel.validScalePresets(panel.selectedOutput).length <= 1
-                                text: "No additional preset divides the current mode into whole logical pixels"
-                                color: Theme.muted
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 112
-                        radius: Theme.radiusMedium
-                        color: Theme.backgroundDark
-                        border.color: Theme.backgroundDarker
-                        border.width: Theme.borderWidth
-
-                        Column {
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                top: parent.top
-                                margins: 14
-                            }
-                            spacing: 9
-
-                            Row {
-                                width: parent.width
-
-                                Text {
-                                    width: parent.width - brightnessValue.width
-                                    text: panel.brightnessAvailable ? `BRIGHTNESS  ·  ${panel.brightnessBackend === "ddc" ? "DDC" : "BACKLIGHT"}` : "BRIGHTNESS"
-                                    color: panel.brightnessAvailable ? Theme.accent : Theme.muted
-                                    font.family: Theme.fontSans
-                                    font.pixelSize: Theme.fontCaption
-                                    font.weight: Font.DemiBold
-                                }
-
-                                Text {
-                                    id: brightnessValue
-                                    text: panel.brightnessPercent >= 0 ? `${panel.brightnessPercent}%` : "UNAVAILABLE"
-                                    color: panel.brightnessAvailable ? Theme.foreground : Theme.muted
-                                    font.family: Theme.fontMono
-                                    font.pixelSize: Theme.fontCaption
-                                }
-                            }
-
-                            PercentSlider {
-                                width: parent.width
-                                value: panel.brightnessPercent
-                                available: panel.brightnessAvailable && panel.brightnessPercent >= 0 && !panel.actionRunning
-                                onRequested: value => panel.setBrightness(value)
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: panel.selectedOutput === null ? "Select an output"
-                                    : panel.brightnessAvailable ? `Hardware brightness for ${panel.selectedOutput.name}`
-                                    : panel.selectedOutput.internal ? "brightnessctl did not report a backlight device"
-                                    : "No matching DDC/CI display was detected"
-                                color: Theme.muted
-                                font.family: Theme.fontSans
-                                font.pixelSize: Theme.fontCaption
-                                elide: Text.ElideRight
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 126
-                        radius: Theme.radiusMedium
-                        color: Theme.backgroundDark
-                        border.color: Theme.backgroundDarker
-                        border.width: Theme.borderWidth
-                        opacity: panel.nightLightAvailable ? 1 : 0.55
-
-                        Column {
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                top: parent.top
-                                margins: 14
-                            }
-                            spacing: 10
-
-                            Row {
-                                width: parent.width
-
-                                Column {
-                                    width: parent.width - nightToggle.width
-                                    spacing: 2
-                                    Text {
-                                        text: "NIGHT LIGHT"
-                                        color: panel.nightLightAvailable ? Theme.accent : Theme.muted
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: Theme.fontCaption
-                                        font.weight: Font.DemiBold
-                                    }
-                                    Text {
-                                        text: panel.nightLightAvailable
-                                            ? panel.nightLightEnabled ? `${panel.nightTemperature} K  ·  warmer colors active` : "Color temperature filter off"
-                                            : "hyprsunset is not running"
-                                        color: Theme.muted
-                                        font.family: Theme.fontSans
-                                        font.pixelSize: Theme.fontCaption
-                                    }
-                                }
-
-                                ActionButton {
-                                    id: nightToggle
-                                    label: panel.nightLightEnabled ? "On" : "Off"
-                                    selected: panel.nightLightEnabled
-                                    enabled: panel.nightLightAvailable && !panel.actionRunning
-                                    onActivated: panel.toggleNightLight()
-                                }
-                            }
-
-                            Flow {
-                                width: parent.width
-                                spacing: 8
-
-                                Repeater {
-                                    model: [2500, 3500, 4500, 5500]
-
-                                    ActionButton {
-                                        required property var modelData
-                                        label: `${modelData} K`
-                                        selected: panel.nightLightEnabled && panel.nightTemperature === Number(modelData)
-                                        enabled: panel.nightLightAvailable && !panel.actionRunning
-                                        onActivated: panel.setNightTemperature(Number(modelData))
-                                    }
-                                }
-                            }
-                        }
+                    Button {
+                        compact: true
+                        variant: "danger"
+                        icon: "monitor-off"
+                        text: "Disable output"
+                        enabled: panel.activeMonitorCount > 1 && !panel.actionRunning
+                        onClicked: panel.confirmDisable()
                     }
                 }
             }
+        }
+    }
 
-            Rectangle {
-                id: footerDivider
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    bottom: parent.bottom
-                    bottomMargin: 42
-                }
-                height: 1
-                color: Theme.backgroundDarker
+    // Selected output
+
+    Column {
+        visible: panel.selectedOutput !== null
+        width: parent.width
+        spacing: Theme.space.md
+
+        SectionHeader {
+            width: parent.width
+            text: "Output"
+            trailing: panel.selectedOutput ? panel.selectedOutput.name : ""
+        }
+
+        Column {
+            width: parent.width
+            spacing: Theme.space.xs
+
+            Label {
+                width: parent.width
+                text: panel.selectedOutput ? panel.selectedOutput.description : ""
+                font.weight: Font.Medium
             }
 
-            Text {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    bottom: parent.bottom
-                    leftMargin: 20
-                    rightMargin: 210
-                    bottomMargin: 13
+            Label {
+                width: parent.width
+                text: panel.selectedOutput && panel.selectedOutput.enabled
+                    ? `position ${panel.selectedOutput.x}, ${panel.selectedOutput.y} · ${panel.transformLabel(panel.selectedOutput.transform)} · vrr ${panel.selectedOutput.vrr === 0 ? "off" : panel.selectedOutput.vrr === 2 ? "fullscreen" : "on"}`
+                    : "Enable this output to adjust it"
+                variant: "numeric"
+                font.pixelSize: Theme.fontSize.caption
+                font.weight: Font.Normal
+                tone: "faint"
+            }
+        }
+
+        SwitchRow {
+            title: "Adaptive sync"
+            detail: panel.selectedOutput && panel.selectedOutput.vrr !== 0 ? (panel.selectedOutput.vrr === 2 ? "VRR on · fullscreen only" : "VRR on") : "VRR off"
+            checked: panel.selectedOutput !== null && panel.selectedOutput.vrr !== 0
+            enabled: panel.selectedOutput !== null && panel.selectedOutput.enabled && !panel.actionRunning
+            onToggled: panel.toggleVrr()
+        }
+
+        SectionHeader {
+            width: parent.width
+            text: "Signal"
+            trailing: panel.selectedOutput
+                ? `${panel.selectedOutput.refreshRate.toFixed(0)} hz · ${panel.bitdepthFor(panel.selectedOutput)}-bit · ${panel.selectedOutput.colorManagementPreset}${panel.selectedOutput.currentFormat ? ` · ${panel.selectedOutput.currentFormat}` : ""}`
+                : ""
+        }
+
+        OptionRow {
+            visible: panel.availableRefreshPresets(panel.selectedOutput).length > 0
+            label: "Refresh"
+            enabled: !panel.displayChangeLocked
+
+            Repeater {
+                model: panel.availableRefreshPresets(panel.selectedOutput)
+
+                Chip {
+                    required property var modelData
+
+                    text: `${Number(modelData)} Hz`
+                    selected: panel.selectedOutput !== null && Math.abs(panel.selectedOutput.refreshRate - Number(modelData)) < 0.5
+                    onClicked: panel.setRefresh(Number(modelData))
                 }
-                text: panel.operationStatus.length > 0 ? panel.operationStatus : "Changes apply for this Hyprland session"
-                color: panel.operationStatus.includes("failed") || panel.operationStatus.includes("cannot") || panel.operationStatus.includes("unavailable") ? Theme.warning : Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                elide: Text.ElideRight
+            }
+        }
+
+        OptionRow {
+            label: "Depth"
+            enabled: !panel.displayChangeLocked
+
+            Chip {
+                text: "8-bit"
+                selected: panel.bitdepthFor(panel.selectedOutput) === 8
+                onClicked: panel.setBitdepth(8)
             }
 
-            Text {
-                anchors {
-                    right: parent.right
-                    bottom: parent.bottom
-                    rightMargin: 20
-                    bottomMargin: 13
-                }
-                text: "esc or click outside to close"
-                color: Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
+            Chip {
+                text: "10-bit"
+                selected: panel.bitdepthFor(panel.selectedOutput) === 10
+                onClicked: panel.setBitdepth(10)
+            }
+        }
+
+        OptionRow {
+            label: "Color"
+            enabled: !panel.displayChangeLocked
+
+            Chip {
+                text: "SDR"
+                selected: panel.colorModeFor(panel.selectedOutput) === "sdr"
+                onClicked: panel.setColorMode("sdr")
             }
 
-            Rectangle {
-                visible: panel.pendingDisableName.length > 0
-                anchors.fill: parent
-                radius: parent.radius
-                color: Theme.withAlpha(Theme.background, 0.92)
-                z: 20
+            Chip {
+                text: "Auto HDR"
+                selected: panel.colorModeFor(panel.selectedOutput) === "auto"
+                onClicked: panel.setColorMode("auto")
+            }
 
-                MouseArea {
-                    anchors.fill: parent
+            Chip {
+                text: "HDR on"
+                selected: panel.colorModeFor(panel.selectedOutput) === "hdr"
+                onClicked: panel.setColorMode("hdr")
+            }
+        }
+
+        OptionRow {
+            label: "Scale"
+            enabled: !panel.actionRunning
+
+            Repeater {
+                model: panel.validScalePresets(panel.selectedOutput)
+
+                Chip {
+                    required property var modelData
+
+                    text: `${Number(modelData).toFixed(Number(modelData) % 1 === 0 ? 0 : 2)}×`
+                    selected: panel.selectedOutput !== null && Math.abs(panel.selectedOutput.scale - Number(modelData)) < 0.01
+                    onClicked: panel.setScale(Number(modelData))
+                }
+            }
+        }
+
+        Label {
+            visible: panel.selectedOutput !== null && panel.selectedOutput.enabled && panel.validScalePresets(panel.selectedOutput).length <= 1
+            width: parent.width
+            leftPadding: 96
+            text: "No additional preset divides the current mode into whole logical pixels"
+            variant: "small"
+            tone: "faint"
+            wrapMode: Text.Wrap
+        }
+
+        Rectangle {
+            visible: panel.pendingDisplayRollbackCommand.length > 0
+            width: parent.width
+            height: 44
+            radius: Theme.radius.medium
+            color: Theme.withAlpha(Theme.warning, Theme.alpha.tint)
+
+            Icon {
+                id: rollbackIcon
+
+                anchors.left: parent.left
+                anchors.leftMargin: Theme.space.md
+                anchors.verticalCenter: parent.verticalCenter
+                name: "timer"
+                size: 15
+                color: Theme.warning
+            }
+
+            Label {
+                anchors {
+                    left: rollbackIcon.right
+                    right: rollbackButtons.left
+                    leftMargin: Theme.space.sm
+                    rightMargin: Theme.space.sm
+                    verticalCenter: parent.verticalCenter
+                }
+                text: `${panel.pendingDisplayDescription} · reverting in 15 seconds`
+                variant: "small"
+                tone: "warning"
+            }
+
+            Row {
+                id: rollbackButtons
+
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.space.sm
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.space.xs + 2
+
+                Button {
+                    compact: true
+                    variant: "danger"
+                    text: "Revert"
+                    enabled: !panel.actionRunning
+                    onClicked: panel.revertDisplayChange()
                 }
 
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: Math.min(430, parent.width - 48)
-                    height: 220
-                    radius: Theme.radiusLarge
-                    color: Theme.backgroundDark
-                    border.color: Theme.error
-                    border.width: Theme.borderWidth
+                Button {
+                    compact: true
+                    variant: "primary"
+                    text: "Keep"
+                    enabled: !panel.actionRunning
+                    onClicked: panel.confirmDisplayChange()
+                }
+            }
+        }
+    }
 
-                    Column {
-                        anchors {
-                            left: parent.left
-                            right: parent.right
-                            top: parent.top
-                            margins: 24
-                        }
-                        spacing: 10
+    // Brightness
 
-                        Text {
-                            text: "Disable display?"
-                            color: Theme.foreground
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontTitle
-                            font.weight: Font.DemiBold
-                        }
+    SectionHeader {
+        width: parent.width
+        text: "Brightness"
+        trailing: panel.brightnessAvailable ? (panel.brightnessBackend === "ddc" ? "ddc/ci" : "backlight") : ""
+    }
 
-                        Text {
-                            width: parent.width
-                            text: `${panel.pendingDisableName} will stop displaying immediately. Windows and workspaces may move to another active output.`
-                            color: Theme.muted
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontBody
-                            wrapMode: Text.Wrap
-                        }
+    Column {
+        width: parent.width
+        spacing: Theme.space.sm
 
-                        Text {
-                            width: parent.width
-                            text: `${panel.activeMonitorCount - 1} display${panel.activeMonitorCount - 1 === 1 ? "" : "s"} will remain active.`
-                            color: Theme.warning
-                            font.family: Theme.fontSans
-                            font.pixelSize: Theme.fontCaption
-                        }
-                    }
+        Item {
+            width: parent.width
+            height: 22
 
-                    Row {
-                        anchors {
-                            right: parent.right
-                            bottom: parent.bottom
-                            margins: 20
-                        }
-                        spacing: 10
+            Label {
+                anchors.left: parent.left
+                anchors.right: brightnessValue.left
+                anchors.rightMargin: Theme.space.md
+                anchors.verticalCenter: parent.verticalCenter
+                text: panel.selectedOutput ? panel.selectedOutput.name : "No output"
+                font.weight: Font.Medium
+                tone: panel.brightnessAvailable ? "base" : "faint"
+            }
 
-                        ActionButton {
-                            label: "Cancel"
-                            onActivated: panel.cancelDisable()
-                        }
+            Label {
+                id: brightnessValue
 
-                        ActionButton {
-                            label: "Disable output"
-                            destructive: true
-                            enabled: panel.activeMonitorCount > 1 && !panel.actionRunning
-                            onActivated: panel.confirmDisable()
-                        }
-                    }
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: brightnessSlider.dragging ? `${panel.brightnessPreview}%`
+                    : panel.brightnessPercent >= 0 ? `${panel.brightnessPercent}%`
+                    : "unavailable"
+                variant: panel.brightnessPercent >= 0 ? "numeric" : "label"
+                tone: panel.brightnessPercent >= 0 ? "base" : "faint"
+            }
+        }
+
+        Slider {
+            id: brightnessSlider
+
+            visible: panel.brightnessAvailable
+            width: parent.width
+            enabled: panel.brightnessAvailable && panel.brightnessPercent >= 0 && !panel.actionRunning
+            value: brightnessSlider.dragging ? panel.brightnessPreview / 100 : Math.max(0, panel.brightnessPercent) / 100
+            onMoved: value => {
+                panel.brightnessPreview = Math.max(1, Math.min(100, Math.round(value * 100)))
+                // Wheel steps commit immediately; drags commit on release.
+                if (!brightnessSlider.dragging)
+                    panel.setBrightness(panel.brightnessPreview)
+            }
+            onDraggingChanged: {
+                if (!dragging && panel.brightnessPreview >= 0)
+                    panel.setBrightness(panel.brightnessPreview)
+            }
+        }
+
+        Label {
+            width: parent.width
+            text: panel.selectedOutput === null ? "Select an output"
+                : panel.brightnessAvailable ? `Hardware brightness for ${panel.selectedOutput.name}`
+                : panel.selectedOutput.internal ? "brightnessctl did not report a backlight device"
+                : "No matching DDC/CI display was detected"
+            variant: "small"
+            tone: "faint"
+        }
+    }
+
+    // Night light
+
+    SectionHeader {
+        width: parent.width
+        text: "Night light"
+        trailing: panel.nightLightAvailable ? "" : "unavailable"
+    }
+
+    Column {
+        width: parent.width
+        spacing: Theme.space.md
+
+        SwitchRow {
+            title: "Warm colors"
+            detail: panel.nightLightAvailable
+                ? panel.nightLightEnabled ? `${panel.nightTemperature} K · warmer colors active` : "Color temperature filter off"
+                : "hyprsunset is not running"
+            checked: panel.nightLightEnabled
+            enabled: panel.nightLightAvailable && !panel.actionRunning
+            onToggled: panel.toggleNightLight()
+        }
+
+        OptionRow {
+            label: "Temperature"
+            enabled: panel.nightLightAvailable && !panel.actionRunning
+
+            Repeater {
+                model: [2500, 3500, 4500, 5500]
+
+                Chip {
+                    required property var modelData
+
+                    text: `${modelData} K`
+                    selected: panel.nightLightEnabled && panel.nightTemperature === Number(modelData)
+                    onClicked: panel.setNightTemperature(Number(modelData))
                 }
             }
         }

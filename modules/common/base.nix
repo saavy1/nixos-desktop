@@ -7,6 +7,14 @@
     "flakes"
   ];
 
+  # Zed's official flake builds from source; its cachix substitutes the
+  # artifacts it holds (toolchain deps and CI-built outputs). Appended so
+  # cache.nixos.org keeps priority.
+  nix.settings.substituters = lib.mkAfter [ "https://zed.cachix.org" ];
+  nix.settings.trusted-public-keys = lib.mkAfter [
+    "zed.cachix.org-1:/pHQ6dpMsAZk2DiP4WCL0p9YDNKWj2Q5FL20bNmw1cU="
+  ];
+
   nixpkgs.config.allowUnfreePredicate =
     pkg:
     builtins.elem (lib.getName pkg) [
@@ -21,7 +29,6 @@
       "steam-unwrapped"
       "chatgpt-app"
       "droid"
-      "claude-code"
       "claude-desktop"
       "moshi-hook"
       "polylane"

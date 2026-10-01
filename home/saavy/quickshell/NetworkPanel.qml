@@ -1,10 +1,10 @@
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import QtQuick
+import qs.ui
 
-PanelWindow {
-    id: panel
+PopupPanel {
+    id: root
 
     property string connectivity: "unknown"
     property bool wifiEnabled: false
@@ -28,24 +28,19 @@ PanelWindow {
             return "No active connections"
         return activeConnections.map(connection => `${connection.name} on ${connection.device}`).join("  ·  ")
     }
-
-    visible: PopupController.isOpen("network")
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    exclusiveZone: 0
-    focusable: visible
-    screen: PopupController.focusedScreen
-
-    anchors {
-        top: true
-        bottom: true
-        left: true
-        right: true
+    readonly property string headerSummary: {
+        if (activeConnections.length === 0)
+            return "no active connections"
+        const primary = activeConnections[0]
+        const extra = activeConnections.length > 1 ? ` · +${activeConnections.length - 1}` : ""
+        return `${primary.device} · ${primary.name}${extra}`.toLowerCase()
     }
+    readonly property string connectivityTone: connectivity === "full" ? "success" : connectivity === "none" ? "danger" : "warning"
 
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    WlrLayershell.namespace: "solitude-network"
+    name: "network"
+    title: "Network"
+    subtitle: headerSummary
+    cardWidth: 460
 
     function splitTerse(line): var {
         const fields = []
@@ -86,7 +81,7 @@ PanelWindow {
             return Theme.success
         if (state === "connecting" || state === "disconnected")
             return Theme.warning
-        return Theme.muted
+        return Theme.text.disabled
     }
 
     function connectivityLabel(): string {
@@ -107,8 +102,27 @@ PanelWindow {
         return null
     }
 
+    function deviceIcon(type): string {
+        switch (type) {
+        case "wifi": return "wifi"
+        case "ethernet": return "ethernet-port"
+        case "loopback": return "circle-dot"
+        default: return "network"
+        }
+    }
+
+    function signalBars(signal): int {
+        if (signal >= 75)
+            return 4
+        if (signal >= 50)
+            return 3
+        if (signal >= 25)
+            return 2
+        return signal > 0 ? 1 : 0
+    }
+
     function requestRefresh(forceScan): void {
-        if (!visible)
+        if (!shown)
             return
 
         if (!connectivityProc.running)
@@ -125,23 +139,6 @@ PanelWindow {
             wifiProc.command = ["nmcli", "-t", "--escape", "yes", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", forceScan ? "yes" : "no"]
             wifiProc.running = true
         }
-    }
-
-    function open(): void {
-        PopupController.open("network")
-        operationStatus = ""
-        requestRefresh(true)
-    }
-
-    function close(): void {
-        PopupController.close("network")
-    }
-
-    function toggle(): void {
-        if (visible)
-            close()
-        else
-            open()
     }
 
     function runAction(argv, description): void {
@@ -186,23 +183,140 @@ PanelWindow {
         runAction(["nmcli", "connection", "up", "uuid", profile.uuid], `Connecting to ${network.ssid}`)
     }
 
-    onVisibleChanged: {
-        if (!visible) {
-            refreshTimer.stop()
-            return
-        }
-        refreshTimer.start()
+    // Tailscale: parsed from `tailscale status --json` (read-only).
+    property string tailscaleState: ""
+    property var tailscaleSelf: null
+    property var tailscalePeers: []
+    property string tailscaleSuffix: ""
+    property bool showOfflinePeers: false
+    readonly property var onlinePeers: tailscalePeers.filter(peer => peer.online)
+    readonly property var offlinePeers: tailscalePeers.filter(peer => !peer.online)
+
+    function peerIcon(peer): string {
+        const tags = peer.tags.join(" ")
+        if (/k8s/.test(tags))
+            return "box"
+        if (peer.os === "android" || peer.os === "iOS")
+            return "smartphone"
+        if (peer.os === "macOS")
+            return "laptop"
+        if (peer.os === "windows")
+            return "monitor"
+        return "server"
     }
 
-    IpcHandler {
-        target: "network"
+    function sinceLabel(stamp): string {
+        const seen = Date.parse(stamp)
+        if (!isFinite(seen) || seen <= 0)
+            return "never seen"
+        const hours = Math.round((Date.now() - seen) / 3600000)
+        if (hours < 1)
+            return "seen just now"
+        if (hours < 48)
+            return `seen ${hours}h ago`
+        return `seen ${Math.round(hours / 24)}d ago`
+    }
 
-        function toggle(): void {
-            panel.toggle()
+    function parseTailscale(text): void {
+        let data
+        try {
+            data = JSON.parse(text)
+        } catch (error) {
+            tailscaleState = "Unavailable"
+            return
         }
 
-        function close(): void {
-            panel.close()
+        const toPeer = node => ({
+            name: (node.DNSName || "").split(".")[0] || node.HostName,
+            host: node.HostName,
+            dns: (node.DNSName || "").replace(/\.$/, ""),
+            ip: (node.TailscaleIPs || [])[0] || "",
+            os: node.OS || "",
+            tags: (node.Tags || []).map(tag => tag.replace(/^tag:/, "")),
+            online: !!node.Online,
+            direct: !!node.CurAddr,
+            relay: node.Relay || "",
+            lastSeen: node.LastSeen || ""
+        })
+        tailscaleState = data.BackendState || ""
+        tailscaleSelf = data.Self ? toPeer(data.Self) : null
+        tailscaleSuffix = data.MagicDNSSuffix || ""
+        tailscalePeers = Object.values(data.Peer || {}).map(toPeer)
+            .sort((left, right) => (right.online - left.online) || left.name.localeCompare(right.name))
+    }
+
+    onOpening: {
+        operationStatus = ""
+        requestRefresh(true)
+        tailscaleProc.running = true
+    }
+
+    Process {
+        id: tailscaleProc
+
+        command: ["tailscale", "status", "--json"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (text.trim().length > 0)
+                    root.parseTailscale(text)
+            }
+        }
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode !== 0)
+                root.tailscaleState = "Unavailable"
+        }
+    }
+
+    Timer {
+        interval: 15000
+        repeat: true
+        running: root.shown
+        onTriggered: {
+            if (!tailscaleProc.running)
+                tailscaleProc.running = true
+        }
+    }
+
+    component PeerRow: ListItem {
+        id: peerRow
+
+        required property var modelData
+
+        width: parent ? parent.width : 0
+        interactive: false
+        hoverHighlight: true
+        opacity: modelData.online ? 1 : 0.6
+        icon: root.peerIcon(modelData)
+        title: modelData.name
+        subtitle: [modelData.tags.join(", ") || modelData.os,
+            modelData.online ? (modelData.direct ? "direct" : `relay ${modelData.relay}`) : root.sinceLabel(modelData.lastSeen)]
+            .filter(part => part).join(" · ")
+        trailing: modelData.ip
+
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: 26
+            implicitHeight: 24
+            iconSize: 13
+            icon: "copy"
+            tone: "faint"
+            onClicked: Quickshell.execDetached(["wl-copy", peerRow.modelData.dns])
+        }
+
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            // Phones and k8s service proxies don't run an SSH server.
+            visible: peerRow.modelData.online && root.peerIcon(peerRow.modelData) !== "smartphone"
+                && root.peerIcon(peerRow.modelData) !== "box"
+            implicitWidth: 26
+            implicitHeight: 24
+            iconSize: 13
+            icon: "terminal"
+            tone: "faint"
+            onClicked: {
+                Quickshell.execDetached(["ghostty", "-e", "tailscale", "ssh", peerRow.modelData.dns])
+                root.close()
+            }
         }
     }
 
@@ -210,9 +324,9 @@ PanelWindow {
         id: refreshTimer
         interval: 15000
         repeat: true
-        running: false
+        running: root.shown
         triggeredOnStart: false
-        onTriggered: panel.requestRefresh(false)
+        onTriggered: root.requestRefresh(false)
     }
 
     Process {
@@ -221,7 +335,7 @@ PanelWindow {
         stdout: StdioCollector {
             onStreamFinished: {
                 const value = text.trim().toLowerCase()
-                panel.connectivity = value.length > 0 ? value : "unknown"
+                root.connectivity = value.length > 0 ? value : "unknown"
             }
         }
     }
@@ -231,8 +345,8 @@ PanelWindow {
         command: ["nmcli", "-t", "--escape", "yes", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active"]
         stdout: StdioCollector {
             onStreamFinished: {
-                panel.activeConnections = panel.outputLines(text).map(line => {
-                    const fields = panel.splitTerse(line)
+                root.activeConnections = root.outputLines(text).map(line => {
+                    const fields = root.splitTerse(line)
                     return {
                         name: fields[0] || "Unnamed connection",
                         type: fields[1] || "unknown",
@@ -248,8 +362,8 @@ PanelWindow {
         command: ["nmcli", "-t", "--escape", "yes", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"]
         stdout: StdioCollector {
             onStreamFinished: {
-                panel.devices = panel.outputLines(text).map(line => {
-                    const fields = panel.splitTerse(line)
+                root.devices = root.outputLines(text).map(line => {
+                    const fields = root.splitTerse(line)
                     return {
                         device: fields[0] || "unknown",
                         type: fields[1] || "unknown",
@@ -266,8 +380,8 @@ PanelWindow {
         command: ["nmcli", "-t", "--escape", "yes", "-f", "NAME,UUID,TYPE", "connection", "show"]
         stdout: StdioCollector {
             onStreamFinished: {
-                panel.wifiProfiles = panel.outputLines(text).map(line => {
-                    const fields = panel.splitTerse(line)
+                root.wifiProfiles = root.outputLines(text).map(line => {
+                    const fields = root.splitTerse(line)
                     return {
                         name: fields[0] || "",
                         uuid: fields[1] || "",
@@ -282,7 +396,7 @@ PanelWindow {
         id: radioProc
         command: ["nmcli", "radio", "wifi"]
         stdout: StdioCollector {
-            onStreamFinished: panel.wifiEnabled = text.trim().toLowerCase() === "enabled"
+            onStreamFinished: root.wifiEnabled = text.trim().toLowerCase() === "enabled"
         }
     }
 
@@ -292,8 +406,8 @@ PanelWindow {
         stdout: StdioCollector {
             onStreamFinished: {
                 const strongest = ({})
-                for (const line of panel.outputLines(text)) {
-                    const fields = panel.splitTerse(line)
+                for (const line of root.outputLines(text)) {
+                    const fields = root.splitTerse(line)
                     const ssid = fields[1] || ""
                     const hidden = ssid.length === 0
                     const key = hidden ? `hidden-${fields[2] || "0"}-${fields[3] || ""}` : ssid
@@ -310,7 +424,7 @@ PanelWindow {
                     if (!strongest[key] || candidate.active || signal > strongest[key].signal)
                         strongest[key] = candidate
                 }
-                panel.networks = Object.keys(strongest).map(key => strongest[key]).sort((left, right) => {
+                root.networks = Object.keys(strongest).map(key => strongest[key]).sort((left, right) => {
                     if (left.active !== right.active)
                         return left.active ? -1 : 1
                     return right.signal - left.signal
@@ -328,493 +442,304 @@ PanelWindow {
         }
         onStarted: {
             failureText = ""
-            panel.actionRunning = true
+            root.actionRunning = true
         }
         onExited: (exitCode, exitStatus) => {
-            panel.actionRunning = false
-            panel.operationStatus = exitCode === 0
-                ? `${panel.actionDescription} succeeded`
-                : `${panel.actionDescription} failed${actionProc.failureText.length > 0 ? " — check the saved NetworkManager profile" : ""}`
-            if (panel.visible)
-                panel.requestRefresh(false)
+            root.actionRunning = false
+            root.operationStatus = exitCode === 0
+                ? `${root.actionDescription} succeeded`
+                : `${root.actionDescription} failed${actionProc.failureText.length > 0 ? " — check the saved NetworkManager profile" : ""}`
+            if (root.shown)
+                root.requestRefresh(false)
         }
     }
 
-    Shortcut {
-        sequence: "Escape"
-        enabled: panel.visible
-        onActivated: panel.close()
+
+    // Four ascending bars for a 0–100 signal value.
+    component SignalBars: Row {
+        id: bars
+
+        property int signal: 0
+        property color fillColor: Theme.text.soft
+        readonly property int level: root.signalBars(signal)
+
+        spacing: 2
+
+        Repeater {
+            model: 4
+
+            delegate: Rectangle {
+                required property int index
+
+                anchors.bottom: parent.bottom
+                width: 3
+                height: 4 + index * 3
+                radius: 1
+                color: index < bars.level ? bars.fillColor : Theme.lineStrong
+            }
+        }
     }
 
-    MouseArea {
-        anchors.fill: parent
-        onClicked: panel.close()
-    }
-
-    PanelCard {
-        id: card
-        anchors {
-            top: parent.top
-            right: parent.right
-            topMargin: Theme.outerMargin + Theme.barHeight + Theme.shellGap
-            rightMargin: Theme.outerMargin
-        }
-        width: Math.min(760, panel.width - 80)
-        height: Math.min(760, panel.height - 100)
-
-        MouseArea {
-            anchors.fill: parent
-        }
-
-        Item {
-            id: header
-            anchors {
-                top: parent.top
-                left: parent.left
-                right: parent.right
-                margins: 20
-            }
-            height: 58
-
-            Column {
-                anchors {
-                    left: parent.left
-                    right: controls.left
-                    verticalCenter: parent.verticalCenter
-                    rightMargin: 18
-                }
-                spacing: 3
-
-                Text {
-                    width: parent.width
-                    text: "Network"
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontTitle
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    width: parent.width
-                    text: panel.activeSummary
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                    elide: Text.ElideRight
-                }
-            }
-
-            Row {
-                id: controls
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 8
-
-                Rectangle {
-                    width: wifiToggleLabel.implicitWidth + 24
-                    height: 34
-                    radius: Theme.radiusMedium
-                    color: wifiToggleArea.containsMouse ? Theme.selection : Theme.backgroundDark
-                    opacity: panel.hasWifiDevice ? 1 : 0.55
-
-                    Text {
-                        id: wifiToggleLabel
-                        anchors.centerIn: parent
-                        text: panel.hasWifiDevice ? (panel.wifiEnabled ? "Wi-Fi on" : "Wi-Fi off") : "No Wi-Fi"
-                        color: panel.wifiEnabled && panel.hasWifiDevice ? Theme.success : Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    MouseArea {
-                        id: wifiToggleArea
-                        anchors.fill: parent
-                        enabled: !panel.actionRunning
-                        hoverEnabled: true
-                        cursorShape: panel.hasWifiDevice ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: panel.toggleWifi()
-                    }
-                }
-
-                Rectangle {
-                    width: 76
-                    height: 34
-                    radius: Theme.radiusMedium
-                    color: refreshArea.containsMouse ? Theme.selection : Theme.backgroundDark
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: panel.refreshing ? "Checking" : "Refresh"
-                        color: Theme.accent
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                    }
-
-                    MouseArea {
-                        id: refreshArea
-                        anchors.fill: parent
-                        enabled: !panel.refreshing
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            panel.operationStatus = "Refreshing network state…"
-                            panel.requestRefresh(true)
-                        }
-                    }
-                }
+    headerTrailing: [
+        Label {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.hasWifiDevice ? "Wi-Fi" : "No Wi-Fi"
+            variant: "label"
+            tone: root.hasWifiDevice && root.wifiEnabled ? "soft" : "faint"
+        },
+        Toggle {
+            anchors.verticalCenter: parent.verticalCenter
+            enabled: !root.actionRunning
+            opacity: root.hasWifiDevice && enabled ? 1 : Theme.alpha.disabled
+            checked: root.hasWifiDevice && root.wifiEnabled
+            onToggled: root.toggleWifi()
+        },
+        IconButton {
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "refresh-cw"
+            label: root.refreshing ? "checking" : ""
+            enabled: !root.refreshing
+            onClicked: {
+                root.operationStatus = "Refreshing network state…"
+                root.requestRefresh(true)
             }
         }
+    ]
+
+    footer: [
+        Label {
+            width: parent.width - footerHint.width - parent.spacing
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.operationStatus.length > 0 ? root.operationStatus : "Saved Wi-Fi profiles connect without exposing credentials"
+            variant: "small"
+            tone: root.operationStatus.includes("failed") || root.operationStatus.includes("required") ? "warning" : "faint"
+        },
+        Label {
+            id: footerHint
+
+            anchors.verticalCenter: parent.verticalCenter
+            text: "esc close"
+            variant: "numeric"
+            font.pixelSize: Theme.fontSize.caption
+            font.weight: Font.Normal
+            tone: "disabled"
+        }
+    ]
+
+    ListItem {
+        width: parent.width
+        interactive: false
+        icon: root.connectivity === "none" ? "wifi-off" : "globe"
+        title: root.connectivityLabel()
+        subtitle: root.activeSummary
+        trailing: root.connectivity
+        trailingTone: root.connectivityTone
 
         Rectangle {
-            id: connectivityCard
-            anchors {
-                top: header.bottom
-                left: parent.left
-                right: parent.right
-                topMargin: 8
-                leftMargin: 20
-                rightMargin: 20
-            }
-            height: 56
-            radius: Theme.radiusMedium
-            color: Theme.backgroundDark
-            border.color: panel.connectivity === "full" ? Theme.success : panel.connectivity === "none" ? Theme.error : Theme.border
-            border.width: Theme.borderWidth
-
-            Rectangle {
-                anchors {
-                    left: parent.left
-                    verticalCenter: parent.verticalCenter
-                    leftMargin: 14
-                }
-                width: 10
-                height: 10
-                radius: 5
-                color: panel.connectivity === "full" ? Theme.success : panel.connectivity === "none" ? Theme.error : Theme.warning
-            }
-
-            Column {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    verticalCenter: parent.verticalCenter
-                    leftMargin: 36
-                    rightMargin: 14
-                }
-                spacing: 2
-
-                Text {
-                    width: parent.width
-                    text: panel.connectivityLabel()
-                    color: Theme.foreground
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontBody
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    width: parent.width
-                    text: panel.activeSummary
-                    color: Theme.muted
-                    font.family: Theme.fontSans
-                    font.pixelSize: Theme.fontCaption
-                    elide: Text.ElideRight
-                }
-            }
+            anchors.verticalCenter: parent.verticalCenter
+            width: 7
+            height: 7
+            radius: 3.5
+            color: Theme.tone(root.connectivityTone)
         }
+    }
 
-        Text {
-            id: devicesHeading
-            anchors {
-                top: connectivityCard.bottom
-                left: parent.left
-                topMargin: 16
-                leftMargin: 22
+    SectionHeader {
+        width: parent.width
+        text: "Devices"
+        trailing: root.devices.length > 0 ? String(root.devices.length) : ""
+    }
+
+    Column {
+        width: parent.width
+        spacing: 2
+
+        Repeater {
+            model: ScriptModel {
+                values: root.devices
             }
-            text: "DEVICES"
-            color: Theme.accent
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.fontCaption
-            font.weight: Font.DemiBold
-        }
 
-        ListView {
-            id: deviceList
-            anchors {
-                top: devicesHeading.bottom
-                left: parent.left
-                right: parent.right
-                topMargin: 7
-                leftMargin: 20
-                rightMargin: 20
-            }
-            height: Math.min(contentHeight, 152)
-            model: ScriptModel { values: panel.devices }
-            spacing: 4
-            clip: true
-
-            delegate: Rectangle {
+            delegate: ListItem {
                 id: deviceRow
+
                 required property var modelData
-                width: deviceList.width
-                height: 48
-                radius: Theme.radiusSmall
-                color: deviceHover.containsMouse ? Theme.backgroundDark : "transparent"
+                readonly property bool linked: root.isConnectedState(modelData.state)
+
+                width: parent.width
+                interactive: false
+                selected: modelData.state === "connected"
+                icon: root.deviceIcon(modelData.type)
+                title: modelData.device
+                subtitle: modelData.connection && modelData.connection !== "--"
+                    ? `${modelData.state} — ${modelData.connection}`
+                    : modelData.state
+                trailing: modelData.type
 
                 Rectangle {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                        leftMargin: 10
-                    }
-                    width: 8
-                    height: 8
-                    radius: 4
-                    color: panel.connectionColor(deviceRow.modelData.state)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 7
+                    height: 7
+                    radius: 3.5
+                    color: root.connectionColor(deviceRow.modelData.state)
                 }
 
-                Column {
-                    anchors {
-                        left: parent.left
-                        right: disconnectButton.left
-                        verticalCenter: parent.verticalCenter
-                        leftMargin: 30
-                        rightMargin: 10
-                    }
-                    spacing: 1
-
-                    Text {
-                        width: parent.width
-                        text: `${deviceRow.modelData.device}  ·  ${deviceRow.modelData.type}`
-                        color: Theme.foreground
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontBody
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: deviceRow.modelData.connection && deviceRow.modelData.connection !== "--"
-                            ? `${deviceRow.modelData.state} — ${deviceRow.modelData.connection}`
-                            : deviceRow.modelData.state
-                        color: Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        elide: Text.ElideRight
-                    }
-                }
-
-                Rectangle {
-                    id: disconnectButton
-                    anchors {
-                        right: parent.right
-                        verticalCenter: parent.verticalCenter
-                        rightMargin: 8
-                    }
-                    visible: panel.isConnectedState(deviceRow.modelData.state)
-                    width: 82
-                    height: 30
-                    radius: Theme.radiusSmall
-                    color: disconnectArea.containsMouse ? Theme.selection : Theme.backgroundDarker
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Disconnect"
-                        color: Theme.warning
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                    }
-
-                    MouseArea {
-                        id: disconnectArea
-                        anchors.fill: parent
-                        enabled: !panel.actionRunning
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: panel.disconnectDevice(deviceRow.modelData.device)
-                    }
-                }
-
-                MouseArea {
-                    id: deviceHover
-                    anchors.fill: parent
-                    acceptedButtons: Qt.NoButton
-                    hoverEnabled: true
+                Button {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: deviceRow.linked
+                    compact: true
+                    text: "Disconnect"
+                    icon: "unlink"
+                    enabled: !root.actionRunning
+                    onClicked: root.disconnectDevice(deviceRow.modelData.device)
                 }
             }
         }
 
-        Text {
-            id: networksHeading
-            anchors {
-                top: deviceList.bottom
-                left: parent.left
-                topMargin: 16
-                leftMargin: 22
+        Label {
+            visible: root.devices.length === 0
+            width: parent.width
+            topPadding: Theme.space.sm
+            text: root.refreshing ? "Reading devices…" : "No network devices reported"
+            variant: "small"
+            tone: "faint"
+        }
+    }
+
+    SectionHeader {
+        width: parent.width
+        text: "Tailscale"
+        trailing: root.tailscaleState === "Running"
+            ? `${root.onlinePeers.length}/${root.tailscalePeers.length} online`
+            : root.tailscaleState.toLowerCase()
+        trailingTone: root.tailscaleState === "Running" || root.tailscaleState === "" ? "faint" : "warning"
+    }
+
+    Column {
+        width: parent.width
+        spacing: 2
+
+        ListItem {
+            visible: root.tailscaleSelf !== null
+            width: parent.width
+            interactive: false
+            icon: "network"
+            title: root.tailscaleSelf ? `${root.tailscaleSelf.name} (this device)` : ""
+            subtitle: root.tailscaleSuffix
+            trailing: root.tailscaleSelf ? root.tailscaleSelf.ip : ""
+            selected: true
+
+            IconButton {
+                anchors.verticalCenter: parent.verticalCenter
+                implicitWidth: 26
+                implicitHeight: 24
+                iconSize: 13
+                icon: "copy"
+                tone: "faint"
+                onClicked: Quickshell.execDetached(["wl-copy", root.tailscaleSelf.ip])
             }
-            text: `WI-FI NETWORKS  ${panel.networks.length}`
-            color: Theme.accent
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.fontCaption
-            font.weight: Font.DemiBold
         }
 
-        ListView {
-            id: networkList
-            anchors {
-                top: networksHeading.bottom
-                left: parent.left
-                right: parent.right
-                bottom: footer.top
-                topMargin: 7
-                leftMargin: 20
-                rightMargin: 20
-                bottomMargin: 8
-            }
-            model: ScriptModel { values: panel.networks }
-            spacing: 4
-            clip: true
+        Repeater {
+            model: root.onlinePeers
 
-            delegate: Rectangle {
+            delegate: PeerRow {}
+        }
+
+        Button {
+            visible: root.offlinePeers.length > 0
+            compact: true
+            variant: "subtle"
+            icon: root.showOfflinePeers ? "chevron-up" : "chevron-down"
+            text: root.showOfflinePeers ? "Hide offline" : `${root.offlinePeers.length} offline`
+            onClicked: root.showOfflinePeers = !root.showOfflinePeers
+        }
+
+        Repeater {
+            model: root.showOfflinePeers ? root.offlinePeers : []
+
+            delegate: PeerRow {}
+        }
+
+        Label {
+            visible: root.tailscaleState !== "" && root.tailscaleState !== "Running"
+            width: parent.width
+            text: root.tailscaleState === "Unavailable"
+                ? "tailscale status is unavailable"
+                : `Tailscale is ${root.tailscaleState.toLowerCase()}`
+            variant: "small"
+            tone: "warning"
+        }
+    }
+
+    SectionHeader {
+        width: parent.width
+        text: "Wi-Fi networks"
+        trailing: String(root.networks.length)
+    }
+
+    Column {
+        width: parent.width
+        spacing: 2
+
+        Repeater {
+            model: ScriptModel {
+                values: root.networks
+            }
+
+            delegate: ListItem {
                 id: networkRow
+
                 required property var modelData
-                readonly property var profile: panel.wifiProfile(modelData.ssid)
-                readonly property bool actionable: modelData.active || profile !== null
+                readonly property var profile: root.wifiProfile(modelData.ssid)
 
-                width: networkList.width
-                height: 54
-                radius: Theme.radiusMedium
-                color: modelData.active ? Theme.selection : networkArea.containsMouse ? Theme.backgroundDark : "transparent"
-                border.color: modelData.active ? Theme.accent : "transparent"
-                border.width: Theme.borderWidth
+                width: parent.width
+                interactive: !root.actionRunning
+                selected: modelData.active
+                indicator: true
+                icon: modelData.secured ? "lock" : "lock-open"
+                title: modelData.hidden ? "Hidden network" : modelData.ssid
+                subtitle: modelData.active
+                    ? "Connected"
+                    : profile !== null
+                        ? "Saved — click to connect"
+                        : modelData.secured
+                            ? "Password required — configure first"
+                            : "Not saved — configure first"
+                trailing: modelData.secured ? modelData.security : "Open"
+                onClicked: root.activateNetwork(modelData)
 
-                Column {
-                    anchors {
-                        left: parent.left
-                        right: networkMeta.left
-                        verticalCenter: parent.verticalCenter
-                        leftMargin: 14
-                        rightMargin: 12
-                    }
-                    spacing: 2
-
-                    Text {
-                        width: parent.width
-                        text: networkRow.modelData.hidden ? "Hidden network" : networkRow.modelData.ssid
-                        color: Theme.foreground
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontBody
-                        font.weight: networkRow.modelData.active ? Font.DemiBold : Font.Normal
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: networkRow.modelData.active
-                            ? "Connected"
-                            : networkRow.profile !== null
-                                ? "Saved — click to connect"
-                                : networkRow.modelData.secured
-                                    ? "Password required — configure first"
-                                    : "Not saved — configure first"
-                        color: networkRow.modelData.active ? Theme.success : Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                        elide: Text.ElideRight
-                    }
+                Label {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 34
+                    horizontalAlignment: Text.AlignRight
+                    text: `${networkRow.modelData.signal}%`
+                    variant: "numeric"
+                    font.pixelSize: Theme.fontSize.small
+                    tone: networkRow.modelData.signal >= 65 ? "soft" : networkRow.modelData.signal >= 35 ? "faint" : "warning"
                 }
 
-                Column {
-                    id: networkMeta
-                    anchors {
-                        right: parent.right
-                        verticalCenter: parent.verticalCenter
-                        rightMargin: 14
-                    }
-                    spacing: 2
-
-                    Text {
-                        anchors.right: parent.right
-                        text: `${networkRow.modelData.signal}%`
-                        color: networkRow.modelData.signal >= 65 ? Theme.success : networkRow.modelData.signal >= 35 ? Theme.warning : Theme.error
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontBody
-                    }
-
-                    Text {
-                        anchors.right: parent.right
-                        text: networkRow.modelData.secured ? networkRow.modelData.security : "Open"
-                        color: Theme.muted
-                        font.family: Theme.fontSans
-                        font.pixelSize: Theme.fontCaption
-                    }
-                }
-
-                MouseArea {
-                    id: networkArea
-                    anchors.fill: parent
-                    enabled: !panel.actionRunning
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: panel.activateNetwork(networkRow.modelData)
+                SignalBars {
+                    anchors.verticalCenter: parent.verticalCenter
+                    signal: networkRow.modelData.signal
+                    fillColor: networkRow.modelData.active ? Theme.accent
+                        : networkRow.modelData.signal >= 35 ? Theme.text.soft
+                        : Theme.warning
                 }
             }
         }
 
-        Text {
-            anchors.centerIn: networkList
-            visible: networkList.count === 0
-            width: networkList.width - 40
-            horizontalAlignment: Text.AlignHCenter
+        Label {
+            visible: root.networks.length === 0
+            width: parent.width
+            topPadding: Theme.space.sm
             wrapMode: Text.WordWrap
-            text: !panel.hasWifiDevice
+            text: !root.hasWifiDevice
                 ? "No Wi-Fi adapter detected. Ethernet devices and connections remain available above."
-                : panel.wifiEnabled
+                : root.wifiEnabled
                     ? "No Wi-Fi networks discovered"
                     : "Wi-Fi is turned off"
-            color: Theme.muted
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.fontBody
-        }
-
-        Item {
-            id: footer
-            anchors {
-                left: parent.left
-                right: parent.right
-                bottom: parent.bottom
-                leftMargin: 20
-                rightMargin: 20
-            }
-            height: 42
-
-            Text {
-                anchors {
-                    left: parent.left
-                    right: footerHint.left
-                    verticalCenter: parent.verticalCenter
-                    rightMargin: 16
-                }
-                text: panel.operationStatus.length > 0 ? panel.operationStatus : "Saved Wi-Fi profiles connect without exposing credentials"
-                color: panel.operationStatus.includes("failed") || panel.operationStatus.includes("required") ? Theme.warning : Theme.muted
-                font.family: Theme.fontSans
-                font.pixelSize: Theme.fontCaption
-                elide: Text.ElideRight
-            }
-
-            Text {
-                id: footerHint
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: "esc close"
-                color: Theme.muted
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontCaption
-            }
+            variant: "small"
+            tone: "faint"
         }
     }
 }

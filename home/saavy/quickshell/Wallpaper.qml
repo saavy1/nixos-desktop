@@ -47,7 +47,7 @@ Scope {
                 readonly property url requestedSource: wallpaper.selectedSource
 
                 screen: modelData
-                color: Theme.background
+                color: Theme.surface.base
                 exclusionMode: ExclusionMode.Ignore
                 exclusiveZone: -1
 
@@ -60,7 +60,7 @@ Scope {
 
                 WlrLayershell.layer: WlrLayer.Background
                 WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-                WlrLayershell.namespace: "solitude-wallpaper"
+                WlrLayershell.namespace: "qs-wallpaper"
 
                 function requestSource(source): void {
                     const nextSource = wallpaper.sourceString(source)

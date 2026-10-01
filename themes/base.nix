@@ -1,56 +1,94 @@
+# Palette-independent design tokens shared by every theme. A palette in
+# ./palettes can override any of these; see ./mk-theme.nix for how they merge.
 {
-  name = "base-dark";
   polarity = "dark";
 
-  colors = {
-    background = "#111315";
-    backgroundDark = "#0d0f11";
-    backgroundDarker = "#090a0c";
-    selection = "#303438";
-    border = "#4f5559";
-    muted = "#555b60";
-    accent = "#7b848a";
-    foreground = "#d0d2d3";
-    foregroundSoft = "#a9afb3";
-    foregroundWarm = "#d1c8c3";
-    error = "#dc6048";
-    warning = "#c8c0ac";
-    success = "#9fa8a4";
-  };
-
   typography = {
-    sans = "Inter";
-    mono = "JetBrainsMono Nerd Font";
+    # UI faces for the shell and GTK. `code` is the terminal/editor face and
+    # needs Nerd Font glyphs for starship, yazi and friends.
+    sans = "IBM Plex Sans";
+    display = "Fraunces";
+    mono = "IBM Plex Mono";
+    code = "JetBrainsMono Nerd Font";
+    icons = "lucide";
+    # Attribute paths under pkgs, installed system-wide via fonts.packages.
+    packages = [
+      "ibm-plex"
+      "fraunces"
+      "nerd-fonts.jetbrains-mono"
+      "lucide"
+    ];
+
+    # Pixel sizes for the shell, except `gtk` (points) and `code` (terminal pt).
     size = {
+      label = 10;
       caption = 11;
+      small = 12;
       body = 14;
-      bar = 14;
+      bar = 13;
+      heading = 16;
       title = 22;
+      display = 28;
+      gtk = 11;
+      code = 14;
     };
   };
 
   geometry = {
     borderWidth = 1;
-    radiusSmall = 6;
-    radiusMedium = 10;
-    radiusLarge = 14;
+    radius = {
+      small = 5;
+      medium = 8;
+      large = 11;
+      pill = 999;
+    };
     shellGap = 10;
     outerMargin = 10;
   };
 
+  spacing = {
+    xs = 4;
+    sm = 8;
+    md = 12;
+    lg = 16;
+    xl = 22;
+    xxl = 32;
+  };
+
+  # Durations in ms.
+  motion = {
+    fast = 120;
+    base = 180;
+    slow = 260;
+  };
+
+  # Opacities applied to the palette's `line`, text and status colors to build
+  # hairlines, hover washes and tints without extra palette entries.
+  alpha = {
+    line = 0.14;
+    lineStrong = 0.22;
+    hover = 0.08;
+    selected = 0.1;
+    tint = 0.14;
+    scrim = 0.45;
+    # Whole-control opacity when disabled.
+    disabled = 0.55;
+  };
+
   effects = {
-    panelOpacity = 0.94;
+    barOpacity = 0.88;
+    panelOpacity = 0.96;
     blur = true;
     blurSize = 8;
     blurPasses = 2;
-    shadow = true;
+    # "soft" (blurred drop shadow), "offset" (hard print-style shadow) or "none".
+    shadow = "soft";
+    grain = true;
+    grainOpacity = 0.07;
   };
 
   shell = {
-    bar = {
-      height = 46;
-      titleWidth = 320;
-    };
+    bar.height = 44;
     launcher = {
       width = 960;
       height = 680;
@@ -64,28 +102,21 @@
 
   icons.name = "Yaru-sage-dark";
 
+  # Package attribute paths under pkgs, like typography.packages.
+  cursor = {
+    name = "Bibata-Modern-Classic";
+    package = "bibata-cursors";
+    size = 24;
+  };
+
+  gtk = {
+    name = "adw-gtk3-dark";
+    package = "adw-gtk3";
+  };
+
   wallpaper = {
     path = null;
     paths = [ ];
     fillMode = "cover";
   };
-
-  terminal = [
-    "#111315"
-    "#555b60"
-    "#9fa8a4"
-    "#d0d2d3"
-    "#7b848a"
-    "#aeaeae"
-    "#707070"
-    "#d0d2d3"
-    "#555b60"
-    "#dc6048"
-    "#303438"
-    "#c8c0ac"
-    "#62686c"
-    "#9a9a9a"
-    "#808080"
-    "#d1c8c3"
-  ];
 }

@@ -17,11 +17,6 @@ in
   # Unlock the login keyring when greetd signs the user in.
   security.pam.services.greetd.enableGnomeKeyring = true;
 
-  fonts.packages = [
-    pkgs.inter
-    pkgs.nerd-fonts.jetbrains-mono
-  ];
-
   services.greetd = {
     enable = true;
     useTextGreeter = true;

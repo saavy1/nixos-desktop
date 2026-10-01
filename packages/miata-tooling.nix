@@ -1,7 +1,7 @@
 # Shared by Home Manager and the Miata dev shell; desktop flake owns tool pins.
 { pkgs, inputs }:
 let
-  rustPkgs = pkgs.extend inputs.konnect.inputs.rust-overlay.overlays.default;
+  rustPkgs = pkgs.extend inputs.rust-overlay.overlays.default;
 in
 {
   kicad = pkgs.kicad;

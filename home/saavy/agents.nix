@@ -2,8 +2,8 @@
 let
   herdrPackage = inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
   cuaDriverPackage = inputs.cua.packages.${pkgs.stdenv.hostPlatform.system}.cua-driver;
-  codex = pkgs.callPackage ../../packages/codex { };
-  omp = pkgs.callPackage ../../packages/omp { };
+  codex = pkgs.codex;
+  omp = pkgs.omp;
   droid = pkgs.callPackage ../../packages/droid { };
   polylane = pkgs.callPackage ../../packages/polylane { };
   agentOrchestratorPackage = pkgs.callPackage ../../packages/agent-orchestrator { };
@@ -47,7 +47,6 @@ in
     herdrPackage
     codex
     pkgs.pi-coding-agent
-    pkgs.claude-code
     droid
     polylane
     agentOrchestratorPackage
@@ -55,12 +54,6 @@ in
 
   # Hermes creates per-profile wrapper commands (for example `dev chat`) here.
   home.sessionPath = [ "$HOME/.local/bin" ];
-
-  # Every cua-driver MCP (Claude, Codex, OMP, ...) should use the native
-  # Wayland backend: layer-shell agent cursor overlay and the Hyprland plugin's
-  # agent seats. Without it the driver falls back to XWayland/X11 input.
-  home.sessionVariables.CUA_DRIVER_RS_ENABLE_WAYLAND = "1";
-  systemd.user.sessionVariables.CUA_DRIVER_RS_ENABLE_WAYLAND = "1";
 
   home.file.".agents/skills/herdr/SKILL.md".source = "${inputs.herdr}/skills/herdr/SKILL.md";
   home.file.".local/bin/moshi-hook".source = "${moshiHook}/bin/moshi-hook";
@@ -89,10 +82,10 @@ in
     ];
   };
 
-  # The upstream module manages Home Manager integration, while the package is
-  # pinned directly from OMP's official release in packages/omp. OMP itself
-  # owns ~/.omp/agent/config.yml; declaring programs.omp.settings would replace
-  # runtime changes on every switch and force re-onboarding.
+  # The upstream module manages Home Manager integration; the CLI itself is
+  # nixpkgs' omp (same upstream project, cached, advances with the lock).
+  # OMP itself owns ~/.omp/agent/config.yml; declaring programs.omp.settings
+  # would replace runtime changes on every switch and force re-onboarding.
   programs.omp = {
     enable = true;
     package = omp;
@@ -113,7 +106,6 @@ in
     gateway.enable = true;
     workingDirectory = "/home/saavy";
     environmentFiles = [ "/home/saavy/.config/hermes/environment" ];
-    environment.CUA_DRIVER_RS_ENABLE_WAYLAND = "1";
     extraPackages = [
       cuaDriverPackage
       pkgs.at-spi2-core

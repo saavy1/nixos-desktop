@@ -18,7 +18,7 @@
   nodejs,
 }:
 let
-  version = "0.2.42";
+  version = "0.2.46";
 in
 stdenvNoCC.mkDerivation {
   pname = "polylane";
@@ -26,7 +26,7 @@ stdenvNoCC.mkDerivation {
 
   src = fetchurl {
     url = "https://github.com/coreplanelabs/cli/releases/download/v${version}/polylane.mjs";
-    hash = "sha256-sNezlmbQ5+tCQ164O6MikpiqATVtRBHBzWZ4YxPz0ug=";
+    hash = "sha256-Vjp6kIyoGdzmPInceIDcrt0eCGXbTVv6ze3bdZtxbSc=";
   };
 
   nativeBuildInputs = [ makeWrapper ];
