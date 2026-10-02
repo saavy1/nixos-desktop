@@ -18,9 +18,9 @@
     # hermes inherits an electron its sha rejects.
     hermes-agent.url = "github:NousResearch/hermes-agent";
 
-    # Follow upstream CUA development rather than a release tag. flake.lock
-    # records the reproducible snapshot; `nix flake update cua` advances it.
-    # Upstream's Nix build includes the portal/libei and wlroots Wayland paths.
+    # Bootstrap and Hyprland-plugin source only. The driver agents actually
+    # run follows upstream main through the updater in home/saavy/cua.nix, so
+    # this lock does not pin it.
     cua.url = "github:trycua/cua";
 
     # KiCad 10 MCP server; keep upstream's tested Rust/nixpkgs toolchain.

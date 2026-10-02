@@ -1,7 +1,6 @@
 { inputs, pkgs, config, lib, ... }:
 let
   herdrPackage = inputs.herdr.packages.${pkgs.stdenv.hostPlatform.system}.default;
-  cuaDriverPackage = inputs.cua.packages.${pkgs.stdenv.hostPlatform.system}.cua-driver;
   codex = pkgs.codex;
   omp = pkgs.omp;
   droid = pkgs.callPackage ../../packages/droid { };
@@ -107,7 +106,7 @@ in
     workingDirectory = "/home/saavy";
     environmentFiles = [ "/home/saavy/.config/hermes/environment" ];
     extraPackages = [
-      cuaDriverPackage
+      config.saavy.cua.package
       pkgs.at-spi2-core
       pkgs.glib
     ];
